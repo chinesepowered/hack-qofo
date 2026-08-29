@@ -32,6 +32,8 @@ export interface InspectResponse {
   events: TimedInspectionEvent[];
   /** Present when the result is weaker than a full inspection would be. */
   caveat?: string;
+  /** Carried back by the client when it asks to follow a hop. */
+  definitionHash?: string;
 }
 
 interface InspectRequest {
@@ -150,9 +152,9 @@ async function inspectPastedSource(source: string, rawName: unknown): Promise<Ne
   // response says so rather than dressing it up as a full result.
   const harnessConfigured = safeHarnessCheck();
 
-  let events: TimedInspectionEvent[];
+  let trace: Awaited<ReturnType<typeof buildStaticTrace>>;
   try {
-    events = await buildStaticTrace(artifactName, source);
+    trace = await buildStaticTrace(artifactName, source);
   } catch {
     // An artifact must never be able to abort its own inspection.
     return NextResponse.json(
@@ -164,10 +166,11 @@ async function inspectPastedSource(source: string, rawName: unknown): Promise<Ne
   const response: InspectResponse = {
     mode: "static",
     artifactName,
-    events,
+    events: trace.events,
+    definitionHash: trace.definitionHash,
     caveat: harnessConfigured
-      ? "Static pass. Live sandboxed inspection of pasted artifacts is not wired up yet."
-      : "Static pass only — no gateway is configured, so nothing was executed and no hop was followed.",
+      ? "Read-only inspection: hops are retrieved and analysed, but nothing is executed. Sandboxed execution of pasted artifacts is not wired up yet."
+      : "Read-only inspection: hops are retrieved and analysed, but nothing is executed — that part needs a harness with a sandbox.",
   };
   return NextResponse.json(response);
 }
