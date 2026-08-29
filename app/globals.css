@@ -1,0 +1,287 @@
+@import "tailwindcss";
+
+/* ============================================================
+   CapyGuard design system — "capybara in a hot spring"
+   Warm sand + yuzu + hot-spring teal. Soft, rounded, calm.
+   ============================================================ */
+
+@theme {
+  /* Surfaces */
+  --color-cream: #fdf7ee;
+  --color-sand: #f5e8d5;
+  --color-sand-deep: #e8d5b8;
+
+  /* Capybara */
+  --color-fur: #b98a5e;
+  --color-fur-dark: #8a6242;
+  --color-fur-light: #d4ab80;
+  --color-snout: #6f4b32;
+
+  /* Hot spring */
+  --color-spring: #3fa9a0;
+  --color-spring-deep: #2c7c77;
+  --color-spring-mist: #d5efec;
+
+  /* Yuzu (the floating citrus) */
+  --color-yuzu: #f5b944;
+  --color-yuzu-deep: #d99a22;
+
+  /* Water at night */
+  --color-water: #16242c;
+  --color-water-deep: #0e1920;
+  --color-water-soft: #1f333d;
+
+  /* Verdict semantics */
+  --color-safe: #4cb782;
+  --color-caution: #f5b944;
+  --color-danger: #e4674f;
+  --color-danger-deep: #c14a34;
+
+  --font-display: "Baloo 2", "Quicksand", ui-rounded, system-ui, sans-serif;
+  --font-body: "Nunito", ui-rounded, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+
+  --radius-blob: 2rem;
+}
+
+/* ---------- Theme tokens (light default, dark override) ---------- */
+
+:root {
+  --bg: var(--color-cream);
+  --bg-panel: #ffffff;
+  --bg-sunken: var(--color-sand);
+  --border: #e5d3ba;
+  --border-soft: #f0e2cd;
+  --text: #3d2c1e;
+  --text-muted: #8a7561;
+  --text-faint: #b3a08a;
+  --shadow-soft: 0 2px 8px rgba(122, 92, 60, 0.08);
+  --shadow-lift: 0 8px 28px rgba(122, 92, 60, 0.14);
+  --shadow-deep: 0 18px 48px rgba(122, 92, 60, 0.18);
+}
+
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    --bg: var(--color-water-deep);
+    --bg-panel: var(--color-water);
+    --bg-sunken: var(--color-water-soft);
+    --border: #2c4450;
+    --border-soft: #223640;
+    --text: #f0e6d8;
+    --text-muted: #9db3bd;
+    --text-faint: #6d8894;
+    --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.42);
+    --shadow-deep: 0 18px 48px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: var(--color-water-deep);
+  --bg-panel: var(--color-water);
+  --bg-sunken: var(--color-water-soft);
+  --border: #2c4450;
+  --border-soft: #223640;
+  --text: #f0e6d8;
+  --text-muted: #9db3bd;
+  --text-faint: #6d8894;
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.42);
+  --shadow-deep: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- Base ---------- */
+
+* {
+  border-color: var(--border-soft);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(
+      ellipse 80% 50% at 50% -10%,
+      color-mix(in srgb, var(--color-spring) 12%, transparent),
+      transparent
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 90% 10%,
+      color-mix(in srgb, var(--color-yuzu) 10%, transparent),
+      transparent
+    );
+  background-attachment: fixed;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Reusable surfaces ---------- */
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.panel-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+.sunken {
+  background: var(--bg-sunken);
+  border-radius: 1rem;
+}
+
+/* ---------- Animations ---------- */
+
+@keyframes capy-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.6deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(0.6deg);
+  }
+}
+
+@keyframes capy-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes yuzu-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  33% {
+    transform: translate(6px, -8px) rotate(8deg);
+  }
+  66% {
+    transform: translate(-5px, -4px) rotate(-6deg);
+  }
+}
+
+@keyframes steam-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.85);
+  }
+  35% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-26px) scale(1.3);
+  }
+}
+
+@keyframes ripple-out {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes slide-up-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes draw-line {
+  from {
+    stroke-dashoffset: var(--dash, 200);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-bob {
+  animation: capy-bob 4.5s ease-in-out infinite;
+}
+.animate-drift {
+  animation: yuzu-drift 7s ease-in-out infinite;
+}
+.animate-steam {
+  animation: steam-rise 3.4s ease-out infinite;
+}
+.animate-ripple {
+  animation: ripple-out 2.6s ease-out infinite;
+}
+.animate-soft-pulse {
+  animation: soft-pulse 1.7s ease-in-out infinite;
+}
+.animate-rise {
+  animation: slide-up-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- Scrollbars ---------- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}

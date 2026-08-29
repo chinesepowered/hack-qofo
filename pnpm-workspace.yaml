@@ -1,0 +1,5 @@
+# pnpm 11 reads build-script approvals from here, not from package.json.
+# Both packages ship native binaries that must compile for Tailwind and Next to work.
+allowBuilds:
+  "@tailwindcss/oxide": true
+  sharp: true
