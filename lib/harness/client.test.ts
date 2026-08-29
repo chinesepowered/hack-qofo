@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { HarnessError, loadHarnessConfig, parseSseStream } from "./client.ts";
+import {
+  HarnessError,
+  loadHarnessConfig,
+  newStreamDiagnostics,
+  parseSseStream,
+  redactSecrets,
+  type StreamOptions,
+} from "./client.ts";
 import type { TurnEvent } from "./events.ts";
+
+const DONE_FRAME = '{"id":"1","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}';
 
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -14,9 +23,17 @@ function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-async function collect(stream: ReadableStream<Uint8Array>): Promise<TurnEvent[]> {
+/** A stream that stays open and never produces a chunk. */
+function idleStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start() {} });
+}
+
+async function collect(
+  stream: ReadableStream<Uint8Array>,
+  options: StreamOptions = {},
+): Promise<TurnEvent[]> {
   const events: TurnEvent[] = [];
-  for await (const event of parseSseStream(stream)) events.push(event);
+  for await (const event of parseSseStream(stream, options)) events.push(event);
   return events;
 }
 
@@ -25,7 +42,7 @@ describe("parseSseStream", () => {
     const events = await collect(
       streamOf(
         'data: {"id":"1","type":"sandbox.created","thread_id":null,"created_at":"x","sandbox_id":"sb1"}\n\n',
-        'data: {"id":"2","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}\n\n',
+        `data: ${DONE_FRAME}\n\n`,
       ),
     );
     assert.deepEqual(events.map((e) => e.type), ["sandbox.created", "turn.done"]);
@@ -41,9 +58,7 @@ describe("parseSseStream", () => {
   });
 
   it("handles CRLF frame separators", async () => {
-    const events = await collect(
-      streamOf('data: {"id":"1","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}\r\n\r\n'),
-    );
+    const events = await collect(streamOf(`data: ${DONE_FRAME}\r\n\r\n`));
     assert.equal(events.length, 1);
   });
 
@@ -56,42 +71,57 @@ describe("parseSseStream", () => {
   });
 
   it("emits a trailing frame that arrives without a final blank line", async () => {
-    const events = await collect(
-      streamOf('data: {"id":"1","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}'),
-    );
+    const events = await collect(streamOf(`data: ${DONE_FRAME}`));
     assert.equal(events.length, 1);
   });
 
-  it("skips comments, keep-alives, and the [DONE] sentinel", async () => {
+  it("skips comments, keep-alives, and the [DONE] sentinel without counting them as damage", async () => {
+    const diagnostics = newStreamDiagnostics();
     const events = await collect(
-      streamOf(
-        ": keep-alive\n\n",
-        "\n\n",
-        "data: [DONE]\n\n",
-        'data: {"id":"1","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}\n\n',
-      ),
+      streamOf(": keep-alive\n\n", "\n\n", "data: [DONE]\n\n", `data: ${DONE_FRAME}\n\n`),
+      { diagnostics },
     );
     assert.equal(events.length, 1);
+    assert.equal(diagnostics.malformedFrames, 0);
   });
 
   it("skips malformed frames rather than aborting the inspection", async () => {
     const events = await collect(
-      streamOf(
-        "data: {not json}\n\n",
-        "data: 42\n\n",
-        'data: {"missing":"type"}\n\n',
-        'data: {"id":"1","type":"turn.done","thread_id":null,"created_at":"x","state":"done"}\n\n',
-      ),
+      streamOf("data: {not json}\n\n", "data: 42\n\n", 'data: {"missing":"type"}\n\n', `data: ${DONE_FRAME}\n\n`),
     );
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "turn.done");
   });
 
-  it("stops early when the caller aborts", async () => {
+  it("counts every dropped frame so the caller can report reduced coverage", async () => {
+    // A dropped frame may have carried the observation that changes a verdict,
+    // so losing one silently would let a clean result stand on partial evidence.
+    const diagnostics = newStreamDiagnostics();
+    await collect(
+      streamOf("data: {not json}\n\n", "data: 42\n\n", 'data: {"missing":"type"}\n\n', `data: ${DONE_FRAME}\n\n`),
+      { diagnostics },
+    );
+    assert.equal(diagnostics.malformedFrames, 3);
+  });
+
+  it("stops early when the caller aborts before reading", async () => {
     const controller = new AbortController();
     controller.abort();
-    const events = await collect_(streamOf('data: {"id":"1","type":"turn.done"}\n\n'), controller.signal);
+    const events = await collect(streamOf(`data: ${DONE_FRAME}\n\n`), { signal: controller.signal });
     assert.equal(events.length, 0);
+  });
+
+  it("stops promptly when aborted while the upstream is idle", { timeout: 5000 }, async () => {
+    // Polling the signal only before the read would hang here forever: the
+    // pending read never settles, so the loop never gets to look again.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25);
+    try {
+      const events = await collect(idleStream(), { signal: controller.signal });
+      assert.equal(events.length, 0);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   it("rejects a stream that floods the frame buffer", async () => {
@@ -102,11 +132,28 @@ describe("parseSseStream", () => {
   });
 });
 
-async function collect_(stream: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<TurnEvent[]> {
-  const events: TurnEvent[] = [];
-  for await (const event of parseSseStream(stream, signal)) events.push(event);
-  return events;
-}
+describe("redactSecrets", () => {
+  it("removes the configured key wherever it appears", () => {
+    const out = redactSecrets("upstream said: key sk-abc123 was rejected", "sk-abc123");
+    assert.ok(!out.includes("sk-abc123"));
+    assert.match(out, /\[redacted\]/);
+  });
+
+  it("removes an echoed Authorization header even if it is not our key", () => {
+    // A proxy may echo a different token than the one we hold.
+    const out = redactSecrets("failed with Authorization: Bearer eyJhbGciOi.J9.sig", "other");
+    assert.ok(!out.includes("eyJhbGciOi.J9.sig"));
+  });
+
+  it("removes labelled credentials in the body", () => {
+    const out = redactSecrets('{"api_key": "abcdef0123456789"}', "");
+    assert.ok(!out.includes("abcdef0123456789"));
+  });
+
+  it("leaves ordinary text alone", () => {
+    assert.equal(redactSecrets("session not found", "sk-abc"), "session not found");
+  });
+});
 
 describe("loadHarnessConfig", () => {
   it("returns null when credentials are absent, so the app can fall back to replay mode", () => {

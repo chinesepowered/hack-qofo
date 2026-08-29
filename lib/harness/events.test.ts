@@ -50,23 +50,6 @@ describe("mergeDelta", () => {
     assert.equal(base.reasoning_content, "step 1 step 2");
   });
 
-  it("reassembles a tool call whose arguments arrive across several deltas", () => {
-    const base = baseMessage();
-    mergeDelta(base, delta({ tool_calls: [{ id: "c1", name: "run_in_sandbox", arguments: '{"cmd":' }] }));
-    mergeDelta(base, delta({ tool_calls: [{ id: "c1", name: "", arguments: '"ls -la"}' }] }));
-
-    assert.equal(base.tool_calls?.length, 1);
-    assert.equal(base.tool_calls?.[0].name, "run_in_sandbox");
-    assert.deepEqual(parseToolArguments(base.tool_calls![0]), { cmd: "ls -la" });
-  });
-
-  it("keeps distinct tool calls apart", () => {
-    const base = baseMessage();
-    mergeDelta(base, delta({ tool_calls: [{ id: "c1", name: "fetch_url" }] }));
-    mergeDelta(base, delta({ tool_calls: [{ id: "c2", name: "hash_definition" }] }));
-    assert.deepEqual(base.tool_calls?.map((c) => c.id), ["c1", "c2"]);
-  });
-
   it("records the finish reason when it arrives late", () => {
     const base = baseMessage();
     mergeDelta(base, delta({ content: "done" }));
@@ -75,9 +58,69 @@ describe("mergeDelta", () => {
   });
 });
 
+describe("mergeDelta tool calls (documented wire format)", () => {
+  it("accumulates by index when later chunks omit the id", () => {
+    // The documented format only guarantees an id on the first chunk; later
+    // chunks carry an index and a fragment of function.arguments.
+    const base = baseMessage();
+    mergeDelta(
+      base,
+      delta({ tool_calls: [{ index: 0, id: "c1", function: { name: "run_in_sandbox", arguments: '{"cmd":' } }] }),
+    );
+    mergeDelta(base, delta({ tool_calls: [{ index: 0, function: { arguments: '"ls -la"}' } }] }));
+
+    assert.equal(base.tool_calls?.length, 1);
+    assert.equal(base.tool_calls?.[0].id, "c1");
+    assert.equal(base.tool_calls?.[0].name, "run_in_sandbox");
+    assert.deepEqual(parseToolArguments(base.tool_calls![0]), { cmd: "ls -la" });
+  });
+
+  it("keeps calls at different indexes apart even when interleaved", () => {
+    const base = baseMessage();
+    mergeDelta(base, delta({ tool_calls: [{ index: 0, id: "c1", function: { name: "fetch_url", arguments: '{"u":' } }] }));
+    mergeDelta(base, delta({ tool_calls: [{ index: 1, id: "c2", function: { name: "hash", arguments: '{"p":' } }] }));
+    mergeDelta(base, delta({ tool_calls: [{ index: 0, function: { arguments: '"a"}' } }] }));
+    mergeDelta(base, delta({ tool_calls: [{ index: 1, function: { arguments: '"b"}' } }] }));
+
+    assert.equal(base.tool_calls?.length, 2);
+    assert.deepEqual(parseToolArguments(base.tool_calls![0]), { u: "a" });
+    assert.deepEqual(parseToolArguments(base.tool_calls![1]), { p: "b" });
+  });
+
+  it("starts a new call when an unseen index reuses an existing id", () => {
+    const base = baseMessage();
+    mergeDelta(base, delta({ tool_calls: [{ index: 0, id: "c1", function: { name: "a" } }] }));
+    mergeDelta(base, delta({ tool_calls: [{ index: 1, id: "c1", function: { name: "b" } }] }));
+    assert.equal(base.tool_calls?.length, 2);
+  });
+
+  it("still merges by id for streams that omit index entirely", () => {
+    const base = baseMessage();
+    mergeDelta(base, delta({ tool_calls: [{ id: "c1", name: "run", arguments: '{"cmd":' }] }));
+    mergeDelta(base, delta({ tool_calls: [{ id: "c1", arguments: '"ls"}' }] }));
+    assert.equal(base.tool_calls?.length, 1);
+    assert.deepEqual(parseToolArguments(base.tool_calls![0]), { cmd: "ls" });
+  });
+
+  it("canonicalises the nested function form onto flat fields", () => {
+    const base = baseMessage();
+    mergeDelta(base, delta({ tool_calls: [{ index: 0, function: { name: "n", arguments: "{}" } }] }));
+    assert.equal(base.tool_calls?.[0].name, "n");
+    assert.equal(base.tool_calls?.[0].arguments, "{}");
+  });
+});
+
 describe("parseToolArguments", () => {
-  it("parses a JSON string payload", () => {
+  it("parses a JSON string payload from either form", () => {
     assert.deepEqual(parseToolArguments({ id: "c", name: "n", arguments: '{"a":1}' }), { a: 1 });
+    assert.deepEqual(parseToolArguments({ id: "c", function: { arguments: '{"a":1}' } }), { a: 1 });
+  });
+
+  it("prefers the nested form when both are present", () => {
+    assert.deepEqual(
+      parseToolArguments({ id: "c", arguments: '{"a":1}', function: { arguments: '{"b":2}' } }),
+      { b: 2 },
+    );
   });
 
   it("passes an object payload through", () => {
