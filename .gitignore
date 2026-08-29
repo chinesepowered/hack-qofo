@@ -1,0 +1,22 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+*.tsbuildinfo
+next-env.d.ts
+
+# Every env variant, including .env.production / .env.development / .env.test.
+# The sanitised template is the one exception.
+.env*
+!.env.example
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+
+npm-debug.log*
+pnpm-debug.log*
