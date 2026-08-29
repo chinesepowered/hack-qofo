@@ -80,8 +80,10 @@ export function Capybara({
       {brow && (
         <>
           <path d={brow} stroke="var(--color-fur-dark)" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+          {/* Same path, mirrored about the centre of the 120-wide viewBox. Rewriting
+              the coordinates by hand would offset y as well as x and skew the face. */}
           <path
-            d={brow.replace(/(\d+(?:\.\d+)?)( )/g, (m, n, s) => `${Number(n) + 32}${s}`)}
+            d={brow}
             stroke="var(--color-fur-dark)"
             strokeWidth="2.4"
             strokeLinecap="round"
