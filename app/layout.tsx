@@ -1,5 +1,31 @@
 import type { Metadata, Viewport } from "next";
+import { Baloo_2, JetBrains_Mono, Nunito } from "next/font/google";
 import "./globals.css";
+
+/**
+ * Fonts are fetched at build time and served from our own origin, so the demo
+ * never depends on Google Fonts being reachable from the venue wifi.
+ */
+const display = Baloo_2({
+  subsets: ["latin"],
+  weight: ["500", "600", "700", "800"],
+  variable: "--font-display-face",
+  display: "swap",
+});
+
+const body = Nunito({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-body-face",
+  display: "swap",
+});
+
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-mono-face",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "CapyGuard — taste-tester for agent skills",
@@ -16,17 +42,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <head>
-        {/* Progressive enhancement: if the network is unavailable at demo time,
-            the rounded system-font fallbacks in globals.css take over cleanly. */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

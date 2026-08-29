@@ -37,9 +37,9 @@
   --color-danger: #e4674f;
   --color-danger-deep: #c14a34;
 
-  --font-display: "Baloo 2", "Quicksand", ui-rounded, system-ui, sans-serif;
-  --font-body: "Nunito", ui-rounded, system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+  --font-display: var(--font-display-face), "Quicksand", ui-rounded, system-ui, sans-serif;
+  --font-body: var(--font-body-face), ui-rounded, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, "Cascadia Code", monospace;
 
   --radius-blob: 2rem;
 }
