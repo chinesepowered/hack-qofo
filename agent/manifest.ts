@@ -310,6 +310,71 @@ export function buildInspectionRequest(reference: ArtifactReference): string {
   ].join("\n");
 }
 
+export interface ManifestAudit {
+  ok: boolean;
+  problems: string[];
+}
+
+/**
+ * Check that an agent already stored in the harness still carries the controls
+ * this product depends on.
+ *
+ * A matching name proves nothing: agent specs are stored under a name and can
+ * be updated separately, so an agent created by hand, or left over from an
+ * earlier version, can pass a name check while missing the containment
+ * instructions entirely. Since those instructions are the injection defence,
+ * running an inspection against a stale agent would quietly remove the
+ * security property while still reporting success.
+ *
+ * Takes `unknown` because this arrives over the network.
+ */
+export function auditStoredManifest(
+  stored: unknown,
+  expectedModel: string = CAPYGUARD_MODEL,
+): ManifestAudit {
+  const problems: string[] = [];
+
+  if (!stored || typeof stored !== "object") {
+    return { ok: false, problems: ["the stored agent has no readable manifest"] };
+  }
+  const spec = stored as Partial<AgentSpec>;
+
+  const instructions = typeof spec.instructions === "string" ? spec.instructions : "";
+  if (!instructions.includes("You do not read the artifact")) {
+    problems.push("instructions are missing the containment rule that keeps the verdict agent clean");
+  }
+  if (!instructions.includes("may only rest on things that were observed")) {
+    problems.push("instructions are missing the observed-behaviour rule");
+  }
+
+  if (spec.model?.name !== expectedModel) {
+    problems.push(`model is '${spec.model?.name ?? "unset"}', expected '${expectedModel}'`);
+  }
+
+  if (spec.config?.sandbox?.enabled !== true) {
+    problems.push("sandbox is not enabled, so nothing can be executed and skills will not load");
+  }
+  if (spec.config?.dynamic_sub_agents?.enabled !== true) {
+    problems.push("dynamic sub-agents are disabled, which removes the context isolation");
+  }
+
+  for (const server of spec.mcp_servers ?? []) {
+    const approvals = server.require_approval_for_tools ?? [];
+    if (server.enable_tools?.includes("@all")) {
+      problems.push(`MCP server '${server.name}' enables every tool`);
+    }
+    if (!approvals.includes("@write") || !approvals.includes("@destructive")) {
+      problems.push(`MCP server '${server.name}' does not gate writes behind approval`);
+    }
+  }
+
+  if (spec.response_format?.type !== "json_schema") {
+    problems.push("response format is not the structured verdict schema");
+  }
+
+  return { ok: problems.length === 0, problems };
+}
+
 export const capyguardManifest: AgentSpec = {
   model: {
     name: CAPYGUARD_MODEL,

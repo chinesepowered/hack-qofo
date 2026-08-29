@@ -233,6 +233,57 @@ export class HarnessClient {
     return payload.data ?? (payload as { id?: string; name?: string });
   }
 
+  /** GET /api/v1/agents/{id} — returns the stored spec, not just the name. */
+  async getAgent(
+    agentId: string,
+    signal?: AbortSignal,
+  ): Promise<{ id?: string; name?: string; manifest?: Record<string, unknown> }> {
+    const res = await fetch(this.url(`/agents/${encodeURIComponent(agentId)}`), {
+      headers: this.headers(),
+      signal,
+    });
+    await this.assertOk(res, "Reading agent");
+    const payload = (await res.json()) as {
+      data?: { id?: string; name?: string; manifest?: Record<string, unknown> };
+    };
+    return payload.data ?? (payload as { id?: string; name?: string; manifest?: Record<string, unknown> });
+  }
+
+  /** PUT /api/v1/agents/{id} — replace the stored spec of an existing agent. */
+  async updateAgent(
+    agentId: string,
+    name: string,
+    manifest: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const res = await fetch(this.url(`/agents/${encodeURIComponent(agentId)}`), {
+      method: "PUT",
+      headers: this.headers(),
+      body: JSON.stringify({ name, manifest }),
+      signal,
+    });
+    await this.assertOk(res, "Updating agent");
+  }
+
+  /**
+   * GET /api/v1/settings/sandbox-providers
+   *
+   * Worth checking explicitly: the sandbox is off by default in TrueForge, and
+   * without a configured provider this product cannot do the one thing it
+   * claims to do — nor can it load its name-only skills.
+   */
+  async listSandboxProviders(signal?: AbortSignal): Promise<Array<{ name?: string; type?: string }>> {
+    const res = await fetch(this.url("/settings/sandbox-providers"), {
+      headers: this.headers(),
+      signal,
+    });
+    await this.assertOk(res, "Reading sandbox providers");
+    const payload = (await res.json()) as
+      | { data?: Array<{ name?: string; type?: string }> }
+      | Array<{ name?: string; type?: string }>;
+    return Array.isArray(payload) ? payload : (payload.data ?? []);
+  }
+
   /** POST /api/v1/sessions — by saved agent name, or with an inline spec. */
   async createSession(agent: AgentRef, signal?: AbortSignal): Promise<Session> {
     const res = await fetch(this.url("/sessions"), {

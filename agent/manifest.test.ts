@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  auditStoredManifest,
   buildInspectionRequest,
   capyguardManifest,
   INSPECTOR_INSTRUCTIONS,
@@ -74,6 +75,68 @@ describe("inspector instructions", () => {
   it("requires an incomplete inspection to degrade to undetermined", () => {
     assert.match(INSPECTOR_INSTRUCTIONS, /must be "undetermined" rather/);
     assert.match(INSPECTOR_INSTRUCTIONS, /Never emit a bare "SAFE" verdict/);
+  });
+});
+
+describe("auditStoredManifest", () => {
+  it("passes the manifest this repo ships", () => {
+    const audit = auditStoredManifest(capyguardManifest, capyguardManifest.model.name);
+    assert.equal(audit.ok, true, audit.problems.join("; "));
+  });
+
+  it("rejects anything that is not a readable manifest", () => {
+    for (const value of [null, undefined, "spec", 42]) {
+      assert.equal(auditStoredManifest(value).ok, false);
+    }
+  });
+
+  it("catches an agent whose instructions lost the containment rule", () => {
+    // The regression that matters: a hand-made or stale agent can carry the
+    // right name while missing the injection defence entirely.
+    const stripped = { ...capyguardManifest, instructions: "You are a helpful assistant." };
+    const audit = auditStoredManifest(stripped, capyguardManifest.model.name);
+    assert.equal(audit.ok, false);
+    assert.ok(audit.problems.some((p) => p.includes("containment rule")));
+    assert.ok(audit.problems.some((p) => p.includes("observed-behaviour")));
+  });
+
+  it("catches a disabled sandbox", () => {
+    const spec = {
+      ...capyguardManifest,
+      config: { ...capyguardManifest.config, sandbox: { enabled: false } },
+    };
+    const audit = auditStoredManifest(spec, capyguardManifest.model.name);
+    assert.ok(audit.problems.some((p) => p.includes("sandbox is not enabled")));
+  });
+
+  it("catches disabled sub-agents, which would remove the context isolation", () => {
+    const spec = {
+      ...capyguardManifest,
+      config: { ...capyguardManifest.config, dynamic_sub_agents: { enabled: false } },
+    };
+    const audit = auditStoredManifest(spec, capyguardManifest.model.name);
+    assert.ok(audit.problems.some((p) => p.includes("sub-agents are disabled")));
+  });
+
+  it("catches an MCP server with ungated writes or blanket tool access", () => {
+    const spec = {
+      ...capyguardManifest,
+      mcp_servers: [{ name: "github", enable_tools: ["@all" as const], require_approval_for_tools: [] }],
+    };
+    const audit = auditStoredManifest(spec, capyguardManifest.model.name);
+    assert.ok(audit.problems.some((p) => p.includes("enables every tool")));
+    assert.ok(audit.problems.some((p) => p.includes("does not gate writes")));
+  });
+
+  it("catches a model that is not the one we expect", () => {
+    const audit = auditStoredManifest(capyguardManifest, "some-other-model");
+    assert.ok(audit.problems.some((p) => p.includes("some-other-model")));
+  });
+
+  it("catches a verdict returned as prose instead of the structured schema", () => {
+    const spec = { ...capyguardManifest, response_format: { type: "text" as const } };
+    const audit = auditStoredManifest(spec, capyguardManifest.model.name);
+    assert.ok(audit.problems.some((p) => p.includes("structured verdict schema")));
   });
 });
 
