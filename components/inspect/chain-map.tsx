@@ -80,7 +80,7 @@ export function ChainMap({ hops }: { hops: ChainHop[] }) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
 
   return (
-    <div className="overflow-x-auto">
+    <div className="min-w-0 overflow-x-auto">
       <svg
         width={width}
         height={height}

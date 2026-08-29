@@ -319,7 +319,7 @@ export function InspectConsole() {
   const started = state.status !== "idle";
 
   return (
-    <section id="inspect" className="scroll-mt-8 py-16">
+    <section id="inspect" className="scroll-mt-8 pb-16 pt-2">
       <div className="mx-auto max-w-2xl text-center">
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-spring)]">
           Try it
@@ -387,7 +387,9 @@ export function InspectConsole() {
 
       {started && state.status !== "error" && (
         <div className="mt-8 grid gap-4 lg:grid-cols-[1.25fr_1fr]">
-          <div className="flex flex-col gap-4">
+          {/* min-w-0: grid items default to min-width:auto, so a wide child in
+              either column would refuse to shrink and squeeze the other one. */}
+          <div className="flex min-w-0 flex-col gap-4">
             <div className="panel p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-display text-base font-bold">Instruction chain</h3>
@@ -412,7 +414,9 @@ export function InspectConsole() {
             )}
           </div>
 
-          <div className="flex flex-col gap-4">
+          {/* min-w-0: grid items default to min-width:auto, so a wide child in
+              either column would refuse to shrink and squeeze the other one. */}
+          <div className="flex min-w-0 flex-col gap-4">
             {state.verdict ? (
               <VerdictCard verdict={state.verdict} caveat={state.caveat} />
             ) : (

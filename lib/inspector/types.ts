@@ -28,6 +28,13 @@ export type FindingKind =
   | "obfuscation"
   | "chain_cycle"
   | "definition_drift"
+  /**
+   * The artifact points somewhere we did not follow. Context, not an
+   * accusation: almost every real skill links to documentation. It exists so a
+   * reviewer can see the unfollowed edge, and it must never be the reason a
+   * verdict escalates — the coverage gap it creates does that on its own.
+   */
+  | "external_reference"
   | "benign_capability";
 
 export interface Finding {

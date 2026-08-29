@@ -123,12 +123,17 @@ export async function buildStaticTrace(
 
   const risk = capForStaticOnly(deriveRisk(sorted, unexplored.length));
 
+  // Only findings at medium or worse are things we are actually alleging.
+  // Counting informational context as "known-bad patterns matched" is how a
+  // link to a docs page ends up described as a threat.
+  const actionable = sorted.filter((f) => f.severity !== "info" && f.severity !== "low").length;
+
   push(
     {
       kind: "verdict",
       verdict: {
         risk,
-        summary: summarise(risk, sorted.length, referencedUrls.length),
+        summary: summarise(risk, actionable, referencedUrls.length),
         definitionHash: await sha256(source),
         findings: sorted,
         unexplored,
@@ -140,21 +145,23 @@ export async function buildStaticTrace(
   return events;
 }
 
-function summarise(risk: RiskLevel, findingCount: number, urlCount: number): string {
+function summarise(risk: RiskLevel, actionable: number, urlCount: number): string {
   const hops =
     urlCount > 0
-      ? ` It also points at ${urlCount} external location${urlCount === 1 ? "" : "s"}, and whatever ${urlCount === 1 ? "it serves is" : "those serve are"} not part of what was reviewed here.`
+      ? ` It points at ${urlCount} external location${urlCount === 1 ? "" : "s"}, and whatever ${urlCount === 1 ? "it serves is" : "those serve are"} not part of what was reviewed here.`
       : "";
 
-  if (findingCount === 0) {
-    return `Nothing matched. That is not a clearance: this run read the text and executed nothing, so anything that only reveals itself when it runs would look exactly like this.${hops}`;
+  const sandbox = " Connect a harness with a sandbox to run it and find out what it actually does.";
+
+  if (actionable === 0) {
+    return `No known-bad pattern matched.${hops} That is not a clearance: this run read the text and executed nothing, so anything that only reveals itself when it runs would look exactly like this.${urlCount > 0 ? sandbox : ""}`;
   }
 
-  const noun = findingCount === 1 ? "pattern" : "patterns";
+  const noun = actionable === 1 ? "pattern" : "patterns";
   const ceiling =
     risk === "suspicious"
       ? " Findings at this level would normally read as malicious, but nothing was executed to confirm it, so the verdict stops at suspicious."
       : "";
 
-  return `${findingCount} known-bad ${noun} matched by reading alone.${ceiling}${hops} Connect a gateway to run this in a sandbox and find out what it actually does.`;
+  return `${actionable} known-bad ${noun} matched by reading alone.${ceiling}${hops}${sandbox}`;
 }
