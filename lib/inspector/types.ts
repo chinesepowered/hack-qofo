@@ -88,6 +88,16 @@ export interface ApprovalRequest {
   destination?: string;
   payloadPreview?: string;
   risk: Severity;
+  /**
+   * When set, approving this means retrieving that URL to continue the chain.
+   * Reading a hop needs no sandbox — only executing one does — so the static
+   * path can still walk the chain, which is the part static scanners cannot do.
+   */
+  followUrl?: string;
+  /** Hop number the fetch would become. */
+  followHop?: number;
+  /** Parent node in the chain map, so the new hop attaches in the right place. */
+  followParentId?: string;
 }
 
 export interface CostSnapshot {

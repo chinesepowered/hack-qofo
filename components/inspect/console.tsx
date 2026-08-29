@@ -29,19 +29,27 @@ import type {
 /**
  * The inspection console.
  *
- * Playback is driven entirely on the client: each event carries the delay to
- * wait before showing it, and an `approval_required` event simply stops the
- * clock until a human decides. Keeping the pacing here means a paused approval
- * holds no server state and a dropped connection cannot strand a demo midway.
+ * Playback is driven on the client: each event carries the delay to wait before
+ * showing it, and an `approval_required` event stops the clock until a human
+ * decides. Keeping the pacing here means a paused approval holds no server
+ * state and a dropped connection cannot strand a demo midway.
+ *
+ * Approving a hop is not just "continue": it asks the server to retrieve that
+ * URL and splices the resulting events into the queue. That is the chain-follow
+ * a static scanner never performs, and it needs no sandbox because reading a
+ * page is not executing it.
  */
 
-type Status = "idle" | "loading" | "running" | "paused" | "done" | "error";
+type Status = "idle" | "loading" | "running" | "paused" | "fetching" | "done" | "error";
 
 interface State {
   status: Status;
   artifactName: string;
   caveat?: string;
   sandboxId?: string;
+  definitionHash?: string;
+  /** URLs already retrieved, so a chain cannot loop us. */
+  visited: string[];
   hops: ChainHop[];
   feed: FeedItem[];
   lanes: Record<InspectorRole, LaneState>;
@@ -61,6 +69,7 @@ const IDLE_LANES: Record<InspectorRole, LaneState> = {
 const INITIAL: State = {
   status: "idle",
   artifactName: "",
+  visited: [],
   hops: [],
   feed: [],
   lanes: IDLE_LANES,
@@ -68,9 +77,10 @@ const INITIAL: State = {
 
 type Action =
   | { type: "loading" }
-  | { type: "loaded"; artifactName: string; caveat?: string }
+  | { type: "loaded"; artifactName: string; caveat?: string; definitionHash?: string }
   | { type: "event"; event: InspectionEvent }
-  | { type: "approved" }
+  | { type: "approved"; followedUrl?: string }
+  | { type: "fetching"; url: string }
   | { type: "denied"; request: ApprovalRequest; definitionHash: string }
   | { type: "finished" }
   | { type: "error"; message: string };
@@ -96,7 +106,13 @@ function reducer(state: State, action: Action): State {
       return { ...INITIAL, status: "loading" };
 
     case "loaded":
-      return { ...INITIAL, status: "running", artifactName: action.artifactName, caveat: action.caveat };
+      return {
+        ...INITIAL,
+        status: "running",
+        artifactName: action.artifactName,
+        caveat: action.caveat,
+        definitionHash: action.definitionHash,
+      };
 
     case "approved":
       if (!state.approval) return state;
@@ -104,7 +120,15 @@ function reducer(state: State, action: Action): State {
         ...state,
         status: "running",
         approval: undefined,
+        visited: action.followedUrl ? [...state.visited, action.followedUrl] : state.visited,
         feed: narrate(state, "You let Capy proceed."),
+      };
+
+    case "fetching":
+      return {
+        ...state,
+        status: "fetching",
+        feed: narrate(state, `Retrieving ${action.url} — reading only, nothing runs.`),
       };
 
     case "denied":
@@ -220,6 +244,12 @@ export function InspectConsole() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stepRef = useRef<() => void>(undefined);
 
+  // Mirrors state so callbacks can read the current chain without re-binding.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
   const clearTimer = useCallback(() => {
     if (timer.current) {
       clearTimeout(timer.current);
@@ -257,6 +287,15 @@ export function InspectConsole() {
 
   useEffect(() => clearTimer, [clearTimer]);
 
+  const resume = useCallback(() => {
+    const next = queue.current[index.current];
+    if (!next) {
+      dispatch({ type: "finished" });
+      return;
+    }
+    timer.current = setTimeout(() => stepRef.current?.(), next.delayMs);
+  }, []);
+
   const run = useCallback(
     async (payload: { sampleId: string } | { source: string; name: string }) => {
       clearTimer();
@@ -275,6 +314,7 @@ export function InspectConsole() {
           error?: string;
           artifactName?: string;
           caveat?: string;
+          definitionHash?: string;
           events?: TimedInspectionEvent[];
         };
 
@@ -285,7 +325,12 @@ export function InspectConsole() {
 
         queue.current = data.events;
         index.current = 0;
-        dispatch({ type: "loaded", artifactName: data.artifactName ?? "artifact", caveat: data.caveat });
+        dispatch({
+          type: "loaded",
+          artifactName: data.artifactName ?? "artifact",
+          caveat: data.caveat,
+          definitionHash: data.definitionHash,
+        });
 
         const first = data.events[0];
         timer.current = setTimeout(() => stepRef.current?.(), first?.delayMs ?? 0);
@@ -296,6 +341,45 @@ export function InspectConsole() {
     [clearTimer],
   );
 
+  /** Retrieve an approved hop and splice what came back into the playback queue. */
+  const followHop = useCallback(async (request: ApprovalRequest) => {
+    const current = stateRef.current;
+    dispatch({ type: "fetching", url: request.followUrl! });
+
+    try {
+      const res = await fetch("/api/inspect/follow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: request.followUrl,
+          hop: request.followHop ?? 1,
+          parentId: request.followParentId ?? "h0",
+          visited: current.visited,
+          priorFindings: observedFindings(current),
+          artifactName: current.artifactName,
+          definitionHash: current.definitionHash,
+        }),
+      });
+
+      const data = (await res.json()) as { error?: string; events?: TimedInspectionEvent[] };
+      if (!res.ok || !data.events) {
+        dispatch({ type: "error", message: data.error ?? "That hop could not be followed." });
+        return;
+      }
+
+      queue.current = [
+        ...queue.current.slice(0, index.current),
+        ...data.events,
+        ...queue.current.slice(index.current),
+      ];
+    } catch {
+      dispatch({ type: "error", message: "Could not reach the inspector to follow that hop." });
+      return;
+    }
+
+    resume();
+  }, [resume]);
+
   const decide = useCallback(
     (approved: boolean, request: ApprovalRequest) => {
       if (!approved) {
@@ -303,19 +387,30 @@ export function InspectConsole() {
         // Only the artifact hash is carried over from the unplayed trace; it
         // describes the file we were given, not behaviour we never watched.
         const pending = queue.current.slice(index.current).find((e) => e.kind === "verdict");
-        const definitionHash = pending?.kind === "verdict" ? pending.verdict.definitionHash : "";
+        const definitionHash =
+          pending?.kind === "verdict"
+            ? pending.verdict.definitionHash
+            : (stateRef.current.definitionHash ?? "");
         dispatch({ type: "denied", request, definitionHash });
         return;
       }
 
-      dispatch({ type: "approved" });
-      const next = queue.current[index.current];
-      timer.current = setTimeout(() => stepRef.current?.(), next?.delayMs ?? 0);
+      dispatch({ type: "approved", followedUrl: request.followUrl });
+
+      if (request.followUrl) {
+        void followHop(request);
+        return;
+      }
+      resume();
     },
-    [clearTimer],
+    [clearTimer, followHop, resume],
   );
 
-  const busy = state.status === "loading" || state.status === "running" || state.status === "paused";
+  const busy =
+    state.status === "loading" ||
+    state.status === "running" ||
+    state.status === "paused" ||
+    state.status === "fetching";
   const started = state.status !== "idle";
 
   return (
@@ -339,7 +434,7 @@ export function InspectConsole() {
             type="button"
             disabled={busy}
             onClick={() => void run({ sampleId: sample.id })}
-            className="panel group p-4 text-left transition hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="panel group min-w-0 p-4 text-left transition hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
               {sample.kind}
@@ -368,7 +463,8 @@ export function InspectConsole() {
         />
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-[var(--text-faint)]">
-            Pasted artifacts get the static pass only — no sandbox, so nothing is executed.
+            If it links somewhere, Capy will offer to follow the chain — reading each hop, never
+            running it.
           </p>
           <button
             type="button"
@@ -390,7 +486,7 @@ export function InspectConsole() {
           {/* min-w-0: grid items default to min-width:auto, so a wide child in
               either column would refuse to shrink and squeeze the other one. */}
           <div className="flex min-w-0 flex-col gap-4">
-            <div className="panel p-4">
+            <div className="panel min-w-0 p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-display text-base font-bold">Instruction chain</h3>
                 {state.sandboxId && (
@@ -405,7 +501,7 @@ export function InspectConsole() {
             <InspectorLanes lanes={state.lanes} />
 
             {state.cost && (
-              <div className="panel flex items-center justify-between gap-3 p-3">
+              <div className="panel flex min-w-0 items-center justify-between gap-3 p-3">
                 <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                   This inspection cost
                 </span>
@@ -414,26 +510,32 @@ export function InspectConsole() {
             )}
           </div>
 
-          {/* min-w-0: grid items default to min-width:auto, so a wide child in
-              either column would refuse to shrink and squeeze the other one. */}
           <div className="flex min-w-0 flex-col gap-4">
             {state.verdict ? (
               <VerdictCard verdict={state.verdict} caveat={state.caveat} />
             ) : (
-              <div className="panel flex items-center gap-3 p-4">
-                <Capybara size={54} mood="curious" bob={busy} />
-                <div>
+              <div className="panel flex min-w-0 items-center gap-3 p-4">
+                <Capybara size={54} mood={state.status === "fetching" ? "alert" : "curious"} bob={busy} />
+                <div className="min-w-0">
                   <p className="font-display text-sm font-bold">
-                    {state.status === "loading" ? "Getting ready…" : `Tasting ${state.artifactName}`}
+                    {state.status === "loading"
+                      ? "Getting ready…"
+                      : state.status === "fetching"
+                        ? "Following the chain…"
+                        : `Tasting ${state.artifactName}`}
                   </p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {state.status === "paused" ? "Waiting for your decision." : "Nobody swallows yet."}
+                    {state.status === "paused"
+                      ? "Waiting for your decision."
+                      : state.status === "fetching"
+                        ? "Reading what that link serves."
+                        : "Nobody swallows yet."}
                   </p>
                 </div>
               </div>
             )}
 
-            <div className="panel max-h-[32rem] overflow-y-auto p-4">
+            <div className="panel max-h-[32rem] min-w-0 overflow-y-auto p-4">
               <h3 className="mb-3 font-display text-base font-bold">What Capy saw</h3>
               <LiveFeed items={state.feed} />
             </div>

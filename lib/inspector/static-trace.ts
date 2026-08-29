@@ -3,53 +3,59 @@ import { sha256 } from "./pinning.ts";
 import {
   deriveRisk,
   sortFindings,
+  type ApprovalRequest,
+  type Finding,
   type InspectionEvent,
   type RiskLevel,
   type TimedInspectionEvent,
 } from "./types.ts";
 
 /**
- * Build an inspection trace from the offline pattern pass.
+ * Build an inspection trace for an artifact somebody pasted.
  *
- * Used when someone pastes their own artifact and no gateway is configured, so
- * the booth demo still returns a real result on real input rather than a
- * placeholder.
+ * The pattern pass reads the artifact. If it points anywhere, the trace stops
+ * at an approval gate rather than at a shrug: retrieving a hop is only a read,
+ * so it does not need a sandbox, and following the chain is precisely what a
+ * static scanner cannot do. The actual fetch happens in `followHop` once a
+ * human approves it.
  */
 
 /**
  * A static pass may not call anything malicious.
  *
  * The product's rule is that a verdict rests on observed behaviour, and nothing
- * was observed here — no sandbox, no execution, no hop followed. Matching
- * `~/.ssh/id_rsa` in a file is strong grounds for suspicion and weak grounds for
- * a conviction, so the ceiling is `suspicious` and the reason is stated in the
- * summary rather than hidden in a footnote.
+ * was executed here — hops were read, not run. Matching `~/.ssh/id_rsa` in a
+ * file is strong grounds for suspicion and weak grounds for a conviction, so
+ * the ceiling is `suspicious` and the reason is stated in the summary rather
+ * than hidden in a footnote.
  */
 export function capForStaticOnly(risk: RiskLevel): RiskLevel {
   return risk === "malicious" ? "suspicious" : risk;
 }
 
-export async function buildStaticTrace(
-  artifactName: string,
-  source: string,
-): Promise<TimedInspectionEvent[]> {
+/** Must match the id `followHop` updates for hop 1. */
+const FIRST_HOP_ID = "h-follow-1";
+
+export interface StaticTrace {
+  events: TimedInspectionEvent[];
+  /** Needed by the follow endpoint to carry a stable pin through the chain. */
+  definitionHash: string;
+  /** Findings so far, threaded into the follow request. */
+  findings: Finding[];
+}
+
+export async function buildStaticTrace(artifactName: string, source: string): Promise<StaticTrace> {
   const { findings, referencedUrls, truncated } = runStaticPass(source);
   const sorted = sortFindings(findings);
-  const events: TimedInspectionEvent[] = [];
+  const definitionHash = await sha256(source);
 
-  // `Omit` over the event union would collapse it to the common keys, so the
-  // parameter is the union itself and the delay is stamped on here.
+  const events: TimedInspectionEvent[] = [];
   const push = (event: InspectionEvent, delayMs = 340) => {
     events.push({ ...event, delayMs });
   };
 
   push({ kind: "started", artifactName, mode: "replay" }, 120);
-  push({
-    kind: "narration",
-    text: "No sandbox configured, so Momo reads it while the others sit this one out.",
-  }, 420);
-
-  push({ kind: "inspector_started", inspector: "momo", note: "Reading for poison patterns" }, 320);
+  push({ kind: "inspector_started", inspector: "momo", note: "Reading for poison patterns" }, 300);
 
   push({
     kind: "hop_discovered",
@@ -70,98 +76,116 @@ export async function buildStaticTrace(
     push({ kind: "finding", finding }, 380);
   }
 
-  referencedUrls.forEach((url, i) => {
+  push(
+    {
+      kind: "inspector_done",
+      inspector: "momo",
+      summary: sorted.length === 0 ? "No known pattern matched." : `${sorted.length} matched.`,
+    },
+    320,
+  );
+
+  // Nothing to chase: finish here.
+  if (referencedUrls.length === 0) {
+    push(
+      {
+        kind: "verdict",
+        verdict: {
+          risk: capForStaticOnly(deriveRisk(sorted, truncationNotes(truncated).length + 1)),
+          summary: summariseNoHops(sorted),
+          definitionHash,
+          findings: sorted,
+          unexplored: [STATIC_ONLY_CAVEAT, ...truncationNotes(truncated)],
+        },
+      },
+      600,
+    );
+    return { events, definitionHash, findings: sorted };
+  }
+
+  // The first hop becomes a real, followable node. The rest are named so a
+  // reviewer can see what else is out there.
+  const [first, ...rest] = referencedUrls;
+
+  push({
+    kind: "hop_discovered",
+    hop: {
+      id: FIRST_HOP_ID,
+      hop: 1,
+      source: artifactName,
+      target: first,
+      label: parseUrl(first)?.hostname ?? first.slice(0, 40),
+      kind: "url",
+      status: "pending",
+      parentId: "h0",
+    },
+  });
+
+  rest.forEach((url, i) => {
     push(
       {
         kind: "hop_discovered",
         hop: {
-          id: `h-url-${i}`,
+          id: `h-alt-${i}`,
           hop: 1,
           source: artifactName,
           target: url,
-          // runStaticPass only returns parseable URLs, but fall back rather
-          // than let one malformed reference abort the whole inspection.
           label: parseUrl(url)?.hostname ?? url.slice(0, 40),
           kind: "url",
           status: "unexplored",
           parentId: "h0",
-          outcome: "Not followed. Following a hop requires a sandbox.",
+          outcome: "Also referenced. Not followed in this run.",
         },
       },
-      260,
+      220,
     );
   });
 
-  push({
-    kind: "inspector_done",
-    inspector: "momo",
-    summary:
-      sorted.length === 0
-        ? "No known pattern matched."
-        : `${sorted.length} pattern${sorted.length === 1 ? "" : "s"} matched.`,
-  }, 320);
+  push({ kind: "narration", text: "It points somewhere. We can read what that serves." }, 420);
+  push({ kind: "approval_required", request: firstHopApproval(first) }, 520);
 
-  const unexplored = [
-    STATIC_ONLY_CAVEAT,
-    ...referencedUrls.map(
-      (url) => `${url} — referenced by the artifact and never followed, because no sandbox was available.`,
-    ),
-  ];
+  return { events, definitionHash, findings: sorted };
+}
 
-  // Clipping output is itself a coverage gap, so it goes in the same list the
-  // reader is already looking at rather than being dropped quietly.
+function firstHopApproval(url: string): ApprovalRequest {
+  return {
+    id: "a-follow-1",
+    toolCallId: "fetch-1",
+    threadId: "thread-nibbles",
+    title: "Nibbles wants to follow the link",
+    plainLanguage:
+      "This artifact points at a URL, and whatever that serves is not part of what you pasted. Retrieving it is only a read — nothing is executed — but it is an outbound request, so it is your call.",
+    destination: parseUrl(url)?.hostname ?? url,
+    payloadPreview: `GET ${url}`,
+    risk: "medium",
+    followUrl: url,
+    followHop: 1,
+    followParentId: "h0",
+  };
+}
+
+function truncationNotes(truncated: { findings: number; urls: number }): string[] {
+  const notes: string[] = [];
   if (truncated.urls > 0) {
-    unexplored.push(
-      `${truncated.urls} further referenced URL${truncated.urls === 1 ? "" : "s"} not listed — the artifact referenced more locations than this report shows.`,
+    notes.push(
+      `${truncated.urls} further referenced URL${truncated.urls === 1 ? "" : "s"} not listed — output was capped.`,
     );
   }
   if (truncated.findings > 0) {
-    unexplored.push(
+    notes.push(
       `${truncated.findings} further pattern match${truncated.findings === 1 ? "" : "es"} not listed — output was capped.`,
     );
   }
-
-  const risk = capForStaticOnly(deriveRisk(sorted, unexplored.length));
-
-  // Only findings at medium or worse are things we are actually alleging.
-  // Counting informational context as "known-bad patterns matched" is how a
-  // link to a docs page ends up described as a threat.
-  const actionable = sorted.filter((f) => f.severity !== "info" && f.severity !== "low").length;
-
-  push(
-    {
-      kind: "verdict",
-      verdict: {
-        risk,
-        summary: summarise(risk, actionable, referencedUrls.length),
-        definitionHash: await sha256(source),
-        findings: sorted,
-        unexplored,
-      },
-    },
-    600,
-  );
-
-  return events;
+  return notes;
 }
 
-function summarise(risk: RiskLevel, actionable: number, urlCount: number): string {
-  const hops =
-    urlCount > 0
-      ? ` It points at ${urlCount} external location${urlCount === 1 ? "" : "s"}, and whatever ${urlCount === 1 ? "it serves is" : "those serve are"} not part of what was reviewed here.`
-      : "";
-
-  const sandbox = " Connect a harness with a sandbox to run it and find out what it actually does.";
+function summariseNoHops(findings: Finding[]): string {
+  const actionable = findings.filter((f) => f.severity !== "info" && f.severity !== "low").length;
 
   if (actionable === 0) {
-    return `No known-bad pattern matched.${hops} That is not a clearance: this run read the text and executed nothing, so anything that only reveals itself when it runs would look exactly like this.${urlCount > 0 ? sandbox : ""}`;
+    return "No known-bad pattern matched, and it points nowhere else. That is not a clearance: this run read the text and executed nothing, so anything that only reveals itself when it runs would look exactly like this.";
   }
 
   const noun = actionable === 1 ? "pattern" : "patterns";
-  const ceiling =
-    risk === "suspicious"
-      ? " Findings at this level would normally read as malicious, but nothing was executed to confirm it, so the verdict stops at suspicious."
-      : "";
-
-  return `${actionable} known-bad ${noun} matched by reading alone.${ceiling}${hops}${sandbox}`;
+  return `${actionable} known-bad ${noun} matched by reading alone. Nothing was executed to confirm it, so the verdict stops short of a conviction. Connect a harness with a sandbox to find out what it actually does.`;
 }

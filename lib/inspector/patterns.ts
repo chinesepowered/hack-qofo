@@ -19,7 +19,17 @@ interface Rule {
   kind: FindingKind;
   severity: Severity;
   pattern: RegExp;
+  /** `{n}` is replaced with the match count for `once` rules. */
   observed: string;
+  /**
+   * Collapse every match into a single finding.
+   *
+   * For shape-based heuristics that fire repeatedly on ordinary content — a
+   * real web page is full of long alphanumeric strings — one finding saying
+   * "this happens N times" is honest, where N separate findings reads as N
+   * separate accusations.
+   */
+  once?: boolean;
 }
 
 /**
@@ -119,9 +129,13 @@ const RULES: Rule[] = [
   },
   {
     kind: "obfuscation",
-    severity: "medium",
+    // Low on purpose. Minified scripts, integrity hashes, inline images and
+    // tokens all look like this, so on its own it is a shape, not a signal.
+    severity: "low",
+    once: true,
     pattern: /[A-Za-z0-9+/]{120,}={0,2}/g,
-    observed: "Contains a long encoded blob whose contents cannot be read directly.",
+    observed:
+      "Contains {n} long encoded run(s) that cannot be read directly. Common in ordinary minified content, so noted rather than alleged.",
   },
 ];
 
@@ -199,7 +213,20 @@ export function runStaticPass(source: string): StaticPassResult {
   for (const rule of RULES) {
     // Each rule carries the global flag, so reset before reuse across inputs.
     rule.pattern.lastIndex = 0;
-    for (const match of source.matchAll(rule.pattern)) {
+    const matches = Array.from(source.matchAll(rule.pattern));
+    if (matches.length === 0) continue;
+
+    if (rule.once) {
+      add(
+        rule.kind,
+        rule.severity,
+        rule.observed.replace("{n}", String(matches.length)),
+        quote(matches[0][0], 80),
+      );
+      continue;
+    }
+
+    for (const match of matches) {
       add(rule.kind, rule.severity, rule.observed, quote(match[0]));
     }
   }
