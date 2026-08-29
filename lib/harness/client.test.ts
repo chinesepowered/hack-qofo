@@ -156,34 +156,60 @@ describe("redactSecrets", () => {
 });
 
 describe("loadHarnessConfig", () => {
-  it("returns null when credentials are absent, so the app can fall back to replay mode", () => {
+  it("returns null when no harness is configured, so the app stays offline-first", () => {
+    // Without this, every user who has not started TrueForge would hit errors
+    // instead of the replay and static paths the demo runs on.
     assert.equal(loadHarnessConfig({}), null);
-    assert.equal(loadHarnessConfig({ TFY_GATEWAY_URL: "https://example.com" }), null);
-    assert.equal(loadHarnessConfig({ TFY_API_KEY: "k" }), null);
+    assert.equal(loadHarnessConfig({ TRUEFORGE_TOKEN: "t" }), null);
   });
 
-  it("treats whitespace-only values as absent", () => {
-    assert.equal(loadHarnessConfig({ TFY_GATEWAY_URL: "  ", TFY_API_KEY: "  " }), null);
+  it("treats a whitespace-only base URL as absent", () => {
+    assert.equal(loadHarnessConfig({ TRUEFORGE_BASE_URL: "   " }), null);
+  });
+
+  it("needs no token, because standalone TrueForge has no login", () => {
+    const config = loadHarnessConfig({ TRUEFORGE_BASE_URL: "http://localhost:8790" });
+    assert.equal(config?.baseUrl, "http://localhost:8790");
+    assert.equal(config?.token, undefined);
+  });
+
+  it("carries a token when OIDC login is enabled", () => {
+    const config = loadHarnessConfig({
+      TRUEFORGE_BASE_URL: "https://forge.example.com",
+      TRUEFORGE_TOKEN: "id-token",
+    });
+    assert.equal(config?.token, "id-token");
+  });
+
+  it("treats a whitespace-only token as absent rather than sending an empty bearer", () => {
+    const config = loadHarnessConfig({
+      TRUEFORGE_BASE_URL: "http://localhost:8790",
+      TRUEFORGE_TOKEN: "  ",
+    });
+    assert.equal(config?.token, undefined);
   });
 
   it("strips trailing slashes so URL joining cannot double up", () => {
-    const config = loadHarnessConfig({ TFY_GATEWAY_URL: "https://gw.example.com/tenant//", TFY_API_KEY: "k" });
-    assert.equal(config?.baseUrl, "https://gw.example.com/tenant");
+    const config = loadHarnessConfig({ TRUEFORGE_BASE_URL: "http://localhost:8790//" });
+    assert.equal(config?.baseUrl, "http://localhost:8790");
   });
 
-  it("rejects a malformed gateway URL", () => {
-    assert.throws(() => loadHarnessConfig({ TFY_GATEWAY_URL: "not a url", TFY_API_KEY: "k" }), HarnessError);
+  it("rejects a malformed base URL", () => {
+    assert.throws(() => loadHarnessConfig({ TRUEFORGE_BASE_URL: "not a url" }), HarnessError);
   });
 
-  it("refuses to send the API key over plaintext http", () => {
+  it("allows plaintext http on loopback, which is how standalone runs", () => {
+    for (const host of ["http://localhost:8790", "http://127.0.0.1:8790"]) {
+      assert.equal(loadHarnessConfig({ TRUEFORGE_BASE_URL: host })?.baseUrl, host);
+    }
+  });
+
+  it("refuses plaintext http to any non-loopback host", () => {
+    // A remote harness over http would put the token, and every artifact we
+    // send it, on the wire in the clear.
     assert.throws(
-      () => loadHarnessConfig({ TFY_GATEWAY_URL: "http://gw.example.com", TFY_API_KEY: "k" }),
+      () => loadHarnessConfig({ TRUEFORGE_BASE_URL: "http://forge.example.com" }),
       HarnessError,
     );
-  });
-
-  it("allows plaintext localhost for local testing", () => {
-    const config = loadHarnessConfig({ TFY_GATEWAY_URL: "http://localhost:8080", TFY_API_KEY: "k" });
-    assert.equal(config?.baseUrl, "http://localhost:8080");
   });
 });

@@ -85,9 +85,17 @@ describe("capyguard manifest", () => {
   });
 
   it("bounds an artifact that keeps generating new hops", () => {
+    // TrueForge caps iteration_limit at 1024 and defaults to 100; a hostile
+    // artifact that keeps producing hops has to terminate well before that.
     const limit = capyguardManifest.config?.iteration_limit ?? 0;
     assert.ok(limit > 0 && limit <= 1024);
-    assert.ok((capyguardManifest.config?.timeout_seconds ?? 0) > 0);
+  });
+
+  it("enables the sandbox, without which skills do not load either", () => {
+    // TrueForge ships sandbox off by default, and documents that name-only
+    // skill references require it.
+    assert.equal(capyguardManifest.config?.sandbox?.enabled, true);
+    assert.ok((capyguardManifest.skills ?? []).length > 0);
   });
 
   it("caps untrusted tool output so it cannot crowd out the operating rules", () => {

@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --test",
-    "check-gateway": "node --env-file=.env.local scripts/check-gateway.ts"
+    "check-harness": "node --env-file-if-exists=.env.local scripts/check-harness.ts"
   },
   "dependencies": {
     "next": "16.3.3",
