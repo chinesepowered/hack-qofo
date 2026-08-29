@@ -23,9 +23,17 @@ interface Rule {
 }
 
 /**
- * Ordered most to least serious. Each rule quotes the matched text verbatim as
- * its evidence, so a reviewer can always see what triggered it.
+ * Output bounds.
+ *
+ * The input is already size-limited, but a crafted paste can still be almost
+ * entirely matches — a wall of credential paths, or thousands of distinct URLs.
+ * Each match becomes an event to serialise and a node to render, so the output
+ * is bounded too. Truncation is always reported, never silent: a scanner that
+ * quietly stops looking is exactly what this project argues against.
  */
+export const MAX_FINDINGS = 60;
+export const MAX_URLS = 25;
+
 const RULES: Rule[] = [
   {
     kind: "credential_access",
@@ -130,10 +138,27 @@ function quote(match: string, limit = 160): string {
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}…` : collapsed;
 }
 
+/**
+ * Parse a URL, or return null.
+ *
+ * `URL_PATTERN` is a text matcher, not a validator, so it happily matches
+ * things like `http://[` that `new URL` rejects. An artifact must never be able
+ * to abort its own inspection by including one.
+ */
+export function parseUrl(raw: string): URL | null {
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
 export interface StaticPassResult {
   findings: Finding[];
-  /** Every URL the artifact references — the hops a full inspection would follow. */
+  /** Valid URLs the artifact references — the hops a full inspection would follow. */
   referencedUrls: string[];
+  /** Non-zero when output bounds clipped the result. Always surfaced to the reader. */
+  truncated: { findings: number; urls: number };
 }
 
 /**
@@ -146,11 +171,18 @@ export function runStaticPass(source: string): StaticPassResult {
   const findings: Finding[] = [];
   const seen = new Set<string>();
   let seq = 0;
+  let droppedFindings = 0;
 
   const add = (kind: FindingKind, severity: Severity, observed: string, evidence: string) => {
     const dedupeKey = `${kind}:${evidence}`;
     if (seen.has(dedupeKey)) return;
     seen.add(dedupeKey);
+
+    if (findings.length >= MAX_FINDINGS) {
+      droppedFindings += 1;
+      return;
+    }
+
     seq += 1;
     findings.push({
       id: `static-${seq}`,
@@ -185,18 +217,26 @@ export function runStaticPass(source: string): StaticPassResult {
   }
 
   URL_PATTERN.lastIndex = 0;
-  const referencedUrls = [...new Set(Array.from(source.matchAll(URL_PATTERN), (m) => m[0]))];
+  const allUrls = [...new Set(Array.from(source.matchAll(URL_PATTERN), (m) => m[0]))].filter(
+    (raw) => parseUrl(raw) !== null,
+  );
+  const referencedUrls = allUrls.slice(0, MAX_URLS);
+  const droppedUrls = allUrls.length - referencedUrls.length;
 
-  if (referencedUrls.length > 0) {
+  if (allUrls.length > 0) {
     add(
       "dynamic_context_execution",
       "medium",
-      `References ${referencedUrls.length} external location${referencedUrls.length === 1 ? "" : "s"}. Whatever they serve is not part of this artifact and can change after review.`,
+      `References ${allUrls.length} external location${allUrls.length === 1 ? "" : "s"}. Whatever they serve is not part of this artifact and can change after review.`,
       referencedUrls.slice(0, 3).join(", "),
     );
   }
 
-  return { findings, referencedUrls };
+  return {
+    findings,
+    referencedUrls,
+    truncated: { findings: droppedFindings, urls: droppedUrls },
+  };
 }
 
 /**

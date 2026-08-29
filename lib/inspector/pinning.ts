@@ -58,7 +58,22 @@ export async function sha256(input: string): Promise<string> {
 interface DeclaredTool {
   name?: unknown;
   description?: unknown;
+  /** MCP's own name for the argument schema. */
+  inputSchema?: unknown;
+  /** OpenAI-style function calling uses this name instead. */
   parameters?: unknown;
+}
+
+/**
+ * The argument schema, under whichever key the document uses.
+ *
+ * The MCP specification calls this `inputSchema`; OpenAI-style tool
+ * definitions call it `parameters`. Reading only one of them silently hashes
+ * every schema as `null`, which would make schema drift invisible and quietly
+ * downgrade a rug-pull to generic medium drift.
+ */
+function argumentSchema(tool: DeclaredTool): unknown {
+  return tool.inputSchema ?? tool.parameters ?? null;
 }
 
 /**
@@ -87,7 +102,7 @@ export async function fingerprintTools(source: string): Promise<ToolFingerprint[
     fingerprints.push({
       name,
       descriptionHash: await sha256(typeof tool.description === "string" ? tool.description : ""),
-      schemaHash: await sha256(JSON.stringify(tool.parameters ?? null)),
+      schemaHash: await sha256(JSON.stringify(argumentSchema(tool))),
     });
   }
   return fingerprints;

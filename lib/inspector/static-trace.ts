@@ -1,4 +1,4 @@
-import { runStaticPass, STATIC_ONLY_CAVEAT } from "./patterns.ts";
+import { parseUrl, runStaticPass, STATIC_ONLY_CAVEAT } from "./patterns.ts";
 import { sha256 } from "./pinning.ts";
 import {
   deriveRisk,
@@ -33,7 +33,7 @@ export async function buildStaticTrace(
   artifactName: string,
   source: string,
 ): Promise<TimedInspectionEvent[]> {
-  const { findings, referencedUrls } = runStaticPass(source);
+  const { findings, referencedUrls, truncated } = runStaticPass(source);
   const sorted = sortFindings(findings);
   const events: TimedInspectionEvent[] = [];
 
@@ -79,7 +79,9 @@ export async function buildStaticTrace(
           hop: 1,
           source: artifactName,
           target: url,
-          label: new URL(url).hostname,
+          // runStaticPass only returns parseable URLs, but fall back rather
+          // than let one malformed reference abort the whole inspection.
+          label: parseUrl(url)?.hostname ?? url.slice(0, 40),
           kind: "url",
           status: "unexplored",
           parentId: "h0",
@@ -105,6 +107,19 @@ export async function buildStaticTrace(
       (url) => `${url} — referenced by the artifact and never followed, because no sandbox was available.`,
     ),
   ];
+
+  // Clipping output is itself a coverage gap, so it goes in the same list the
+  // reader is already looking at rather than being dropped quietly.
+  if (truncated.urls > 0) {
+    unexplored.push(
+      `${truncated.urls} further referenced URL${truncated.urls === 1 ? "" : "s"} not listed — the artifact referenced more locations than this report shows.`,
+    );
+  }
+  if (truncated.findings > 0) {
+    unexplored.push(
+      `${truncated.findings} further pattern match${truncated.findings === 1 ? "" : "es"} not listed — output was capped.`,
+    );
+  }
 
   const risk = capForStaticOnly(deriveRisk(sorted, unexplored.length));
 

@@ -106,6 +106,41 @@ describe("detectDrift", () => {
     assert.equal(removed.severity, "medium");
   });
 
+  it("detects schema drift when the tool uses MCP's inputSchema key", async () => {
+    // The MCP spec calls the argument schema `inputSchema`; reading only
+    // `parameters` hashes every real MCP schema as null, which would make
+    // schema drift invisible and downgrade a rug-pull to generic drift.
+    const withSchema = (required: string[]) =>
+      JSON.stringify({
+        tools: [
+          {
+            name: "send_invoice",
+            description: "Sends an invoice.",
+            inputSchema: { type: "object", properties: { to: { type: "string" } }, required },
+          },
+        ],
+      });
+
+    const approved = await pinDefinition("mcp", withSchema(["to"]), PINNED_AT);
+    const current = await pinDefinition("mcp", withSchema([]), PINNED_AT);
+
+    const schemaDrift = detectDrift(approved, current).findings.find(
+      (f) => f.kind === "definition_drift" && f.observed.includes("parameter schema"),
+    );
+    assert.ok(schemaDrift, "expected schema drift to be detected via inputSchema");
+    assert.equal(schemaDrift.severity, "high");
+  });
+
+  it("hashes inputSchema and parameters into the same fingerprint slot", async () => {
+    const viaInputSchema = await fingerprintTools(
+      JSON.stringify({ tools: [{ name: "t", description: "d", inputSchema: { type: "object" } }] }),
+    );
+    const viaParameters = await fingerprintTools(
+      JSON.stringify({ tools: [{ name: "t", description: "d", parameters: { type: "object" } }] }),
+    );
+    assert.equal(viaInputSchema?.[0].schemaHash, viaParameters?.[0].schemaHash);
+  });
+
   it("still reports drift when the artifact declares no tools at all", async () => {
     const approved = await pinDefinition("skill", "# v1\n", PINNED_AT);
     const current = await pinDefinition("skill", "# v2\n", PINNED_AT);

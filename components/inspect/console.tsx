@@ -14,11 +14,13 @@ import {
   type FeedItem,
   type LaneState,
 } from "./panels";
+import { buildDeniedVerdict, pendingHops } from "@/lib/inspector/denial";
 import { SAMPLE_ARTIFACTS } from "@/lib/inspector/samples";
 import type {
   ApprovalRequest,
   ChainHop,
   CostSnapshot,
+  Finding,
   InspectionEvent,
   TimedInspectionEvent,
   Verdict,
@@ -65,11 +67,11 @@ const INITIAL: State = {
 };
 
 type Action =
-  | { type: "reset" }
   | { type: "loading" }
   | { type: "loaded"; artifactName: string; caveat?: string }
   | { type: "event"; event: InspectionEvent }
-  | { type: "decided"; approved: boolean }
+  | { type: "approved" }
+  | { type: "denied"; request: ApprovalRequest; definitionHash: string }
   | { type: "finished" }
   | { type: "error"; message: string };
 
@@ -79,28 +81,34 @@ function nextFeedId(prefix: string): string {
   return `${prefix}-${feedSeq}`;
 }
 
+function narrate(state: State, text: string): FeedItem[] {
+  return [...state.feed, { id: nextFeedId("feed"), type: "narration", text }];
+}
+
+/** Findings actually streamed so far — the only evidence a verdict may cite. */
+function observedFindings(state: State): Finding[] {
+  return state.feed.filter((item) => item.type === "finding").map((item) => item.finding);
+}
+
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "reset":
-      return INITIAL;
-
     case "loading":
       return { ...INITIAL, status: "loading" };
 
     case "loaded":
       return { ...INITIAL, status: "running", artifactName: action.artifactName, caveat: action.caveat };
 
-    case "decided": {
+    case "approved":
       if (!state.approval) return state;
-      const decision: FeedItem = {
-        id: nextFeedId("decision"),
-        type: "narration",
-        text: action.approved
-          ? "You let Capy proceed."
-          : "You denied it. The rest of that branch stays unexplored.",
+      return {
+        ...state,
+        status: "running",
+        approval: undefined,
+        feed: narrate(state, "You let Capy proceed."),
       };
-      return { ...state, status: "running", approval: undefined, feed: [...state.feed, decision] };
-    }
+
+    case "denied":
+      return applyDenial(state, action.request, action.definitionHash);
 
     case "finished":
       return { ...state, status: "done" };
@@ -113,6 +121,29 @@ function reducer(state: State, action: Action): State {
   }
 }
 
+/** See `buildDeniedVerdict` — a denied step must never be reported as observed. */
+function applyDenial(state: State, request: ApprovalRequest, definitionHash: string): State {
+  const verdict = buildDeniedVerdict({
+    observed: observedFindings(state),
+    pendingHops: pendingHops(state.hops),
+    request,
+    definitionHash,
+  });
+
+  return {
+    ...state,
+    status: "done",
+    approval: undefined,
+    verdict,
+    hops: state.hops.map((h) =>
+      h.status === "pending" || h.status === "following"
+        ? { ...h, status: "blocked", outcome: "You denied this step." }
+        : h,
+    ),
+    feed: narrate(state, "You denied it. The inspection stops here, and says so."),
+  };
+}
+
 function applyEvent(state: State, event: InspectionEvent): State {
   switch (event.kind) {
     case "started":
@@ -122,10 +153,7 @@ function applyEvent(state: State, event: InspectionEvent): State {
       return {
         ...state,
         sandboxId: event.sandboxId,
-        feed: [
-          ...state.feed,
-          { id: nextFeedId("feed"), type: "narration", text: `Sandbox ${event.sandboxId} is up.` },
-        ],
+        feed: narrate(state, `Sandbox ${event.sandboxId} is up.`),
       };
 
     case "inspector_started":
@@ -164,10 +192,7 @@ function applyEvent(state: State, event: InspectionEvent): State {
       };
 
     case "narration":
-      return {
-        ...state,
-        feed: [...state.feed, { id: nextFeedId("feed"), type: "narration", text: event.text }],
-      };
+      return { ...state, feed: narrate(state, event.text) };
 
     case "approval_required":
       return { ...state, status: "paused", approval: event.request };
@@ -272,19 +297,18 @@ export function InspectConsole() {
   );
 
   const decide = useCallback(
-    (approved: boolean) => {
-      dispatch({ type: "decided", approved });
-
+    (approved: boolean, request: ApprovalRequest) => {
       if (!approved) {
-        // Stop here rather than replaying steps the human just refused.
         clearTimer();
-        const remaining = queue.current.slice(index.current);
-        const verdict = remaining.find((e) => e.kind === "verdict");
-        if (verdict) dispatch({ type: "event", event: verdict });
-        dispatch({ type: "finished" });
+        // Only the artifact hash is carried over from the unplayed trace; it
+        // describes the file we were given, not behaviour we never watched.
+        const pending = queue.current.slice(index.current).find((e) => e.kind === "verdict");
+        const definitionHash = pending?.kind === "verdict" ? pending.verdict.definitionHash : "";
+        dispatch({ type: "denied", request, definitionHash });
         return;
       }
 
+      dispatch({ type: "approved" });
       const next = queue.current[index.current];
       timer.current = setTimeout(() => stepRef.current?.(), next?.delayMs ?? 0);
     },
@@ -317,11 +341,9 @@ export function InspectConsole() {
             onClick={() => void run({ sampleId: sample.id })}
             className="panel group p-4 text-left transition hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
-                {sample.kind}
-              </span>
-            </div>
+            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-faint)]">
+              {sample.kind}
+            </span>
             <h3 className="mt-1 font-display text-sm font-bold">{sample.name}</h3>
             <p className="mt-1.5 text-xs leading-snug text-[var(--text-muted)]">{sample.teaser}</p>
             <p className="mt-2 text-[11px] italic leading-snug text-[var(--text-faint)]">
@@ -415,7 +437,12 @@ export function InspectConsole() {
         </div>
       )}
 
-      {state.approval && <ApprovalGate request={state.approval} onDecide={decide} />}
+      {state.approval && (
+        <ApprovalGate
+          request={state.approval}
+          onDecide={(approved) => decide(approved, state.approval!)}
+        />
+      )}
     </section>
   );
 }

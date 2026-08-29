@@ -20,6 +20,8 @@ import type { TimedInspectionEvent } from "@/lib/inspector/types";
 
 /** Refuse anything large enough to be a denial-of-service rather than a skill. */
 const MAX_SOURCE_BYTES = 256 * 1024;
+/** Whole-request ceiling, checked before anything is parsed. */
+const MAX_BODY_BYTES = MAX_SOURCE_BYTES + 8 * 1024;
 const MAX_NAME_LENGTH = 120;
 
 export type InspectMode = "live" | "replay" | "static";
@@ -38,13 +40,68 @@ interface InspectRequest {
   name?: unknown;
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
-  let body: InspectRequest;
+const tooLarge = () =>
+  NextResponse.json(
+    { error: `Request is larger than the ${Math.floor(MAX_BODY_BYTES / 1024)} KB limit.` },
+    { status: 413 },
+  );
+
+/**
+ * Read the body without letting an unbounded one through first.
+ *
+ * `request.json()` would buffer and parse everything before any size check
+ * could run, so the advertised limit would only apply after the cost had
+ * already been paid. Content-Length is checked when present, and the stream is
+ * capped while reading because that header cannot be trusted.
+ */
+async function readBoundedText(request: Request): Promise<string | null> {
+  const advertised = Number(request.headers.get("content-length"));
+  if (Number.isFinite(advertised) && advertised > MAX_BODY_BYTES) return null;
+
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+
   try {
-    body = (await request.json()) as InspectRequest;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) return null;
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    await reader.cancel().catch(() => {
+      /* already closed */
+    });
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const raw = await readBoundedText(request);
+  if (raw === null) return tooLarge();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
+
+  // `null` and arrays both parse cleanly, so check the shape before reading
+  // fields off it rather than trusting the cast.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return NextResponse.json({ error: "Expected a JSON object." }, { status: 400 });
+  }
+  const body = parsed as InspectRequest;
 
   if (typeof body.sampleId === "string") {
     return inspectSample(body.sampleId);
@@ -84,12 +141,7 @@ async function inspectPastedSource(source: string, rawName: unknown): Promise<Ne
   if (byteLength === 0) {
     return NextResponse.json({ error: "Nothing to inspect." }, { status: 400 });
   }
-  if (byteLength > MAX_SOURCE_BYTES) {
-    return NextResponse.json(
-      { error: `Artifact is larger than the ${MAX_SOURCE_BYTES / 1024} KB limit.` },
-      { status: 413 },
-    );
-  }
+  if (byteLength > MAX_SOURCE_BYTES) return tooLarge();
 
   const artifactName = sanitiseName(rawName);
 
@@ -98,7 +150,17 @@ async function inspectPastedSource(source: string, rawName: unknown): Promise<Ne
   // response says so rather than dressing it up as a full result.
   const harnessConfigured = safeHarnessCheck();
 
-  const events = await buildStaticTrace(artifactName, source);
+  let events: TimedInspectionEvent[];
+  try {
+    events = await buildStaticTrace(artifactName, source);
+  } catch {
+    // An artifact must never be able to abort its own inspection.
+    return NextResponse.json(
+      { error: "The artifact could not be analysed. This is a bug, not a verdict." },
+      { status: 500 },
+    );
+  }
+
   const response: InspectResponse = {
     mode: "static",
     artifactName,

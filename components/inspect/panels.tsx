@@ -307,8 +307,9 @@ export function VerdictCard({ verdict, caveat }: { verdict: Verdict; caveat?: st
         </div>
 
         <p className="text-xs italic leading-relaxed text-[var(--text-faint)]">
-          Re-inspection is triggered automatically if this hash ever changes — which is how a
-          sleeper rug-pull gets caught after approval.
+          Record this hash alongside your approval. Re-inspecting later and comparing against it is
+          how a sleeper rug-pull gets caught — this build computes and compares pins, but does not
+          yet store them for you or re-check on a schedule.
         </p>
       </div>
     </div>
