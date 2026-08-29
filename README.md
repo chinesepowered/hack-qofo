@@ -78,15 +78,6 @@ TrueFoundry's platform registers agents, enforces least privilege, and filters t
 
 Their own docs name the gap: *"unvetted servers bring prompt-injection risk, credential sprawl, and no audit trail"* — and the recommended answer is to allowlist approved servers. CapyGuard produces the evidence that decides what goes on that allowlist. It's admission control for the Skills Registry, not a competitor to the runtime guardrails.
 
-## Status
-
-🚧 Built at a hackathon, in the open, one reviewed PR at a time.
-
-| PR | Scope |
-|---|---|
-| #1 | Qodo review configuration |
-| #2 | Scaffold, capybara design system, landing page |
-
 ## Running it
 
 ```bash
@@ -94,11 +85,60 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. **No credentials required** — the sample artifacts replay from recorded traces and the paste box runs an offline pattern pass, so the whole thing works with no network.
+
+### Connecting a real gateway
+
+Copy `.env.example` to `.env.local`, then:
+
+```bash
+pnpm check-gateway
+```
+
+It checks the four things that gate a live inspection and tells you which one is missing:
+
+```
+  ✓ gateway https://gateway.truefoundry.ai/<tenant>
+  ✓ api key present (70 chars, not shown)
+  ✓ authenticated, and the agent API is reachable
+  ✗ no model access (403) for 'gemini-3.7-flash'
+  ✗ no agent named 'capyguard-inspector' exists in this workspace
+```
+
+Two things about the gateway URL that cost us time and aren't obvious from the docs:
+
+1. **The tenant is the first path segment**, so the value is `https://gateway.truefoundry.ai/<tenant>`, not just the host. If you don't know your tenant, request an agent path with a deliberately wrong first segment — the gateway names it in the error: `Tenant mismatch: tenant 'acme' does not match requested tenant 'api'`.
+2. **Agent sessions live under `/v1`**, at `<TFY_GATEWAY_URL>/v1/agents/sessions`. The OpenAI-compatible inference route is elsewhere, under `/api/llm/api/inference/openai/v1`, and is *not* tenant-scoped.
+
+The client talks to that HTTP API with plain `fetch` — no Python SDK, no CLI, no native dependency — so it behaves identically on Windows, macOS, and Linux, and none of the `tfy login` friction applies.
+
+`DEMO.md` has the three-minute run of show.
+
+## Being honest about the limits
+
+A security tool that oversells itself is worse than none, so these are load-bearing:
+
+- **A static-only result never says "clean".** If nothing matched, the verdict is `undetermined`, and the summary says: *anything that only reveals itself when it runs would look exactly like this.*
+- **Reading is never enough for a conviction.** The static pass caps out at `suspicious` no matter what it matches, because nothing was observed.
+- **Unexplored hops degrade the verdict.** Any gap in coverage takes a clean result down to `undetermined` rather than being quietly dropped.
+- **Behavioural evidence outranks textual evidence.** Watching a credential get posted is a different class of proof from reading a worrying string.
+- **Sandbox evasion is unsolved**, here and everywhere else. When an artifact appears to detect the sandbox, that gets reported rather than hidden.
 
 ## Code quality
 
-Every change lands through a pull request reviewed by [Qodo](https://docs.qodo.ai) before merge. The review guidelines in `.pr_agent.toml` tell Qodo that this codebase executes untrusted input in a sandbox, so it weights sandbox escapes, untrusted content influencing verdicts, secret exposure, and unbounded instruction-chain recursion as the findings that matter.
+Every change lands through a pull request reviewed by [Qodo](https://docs.qodo.ai) before merge. The guidelines in `.pr_agent.toml` tell Qodo this codebase executes untrusted input in a sandbox, so it weights sandbox escapes, untrusted content influencing verdicts, secret exposure, and unbounded instruction-chain recursion as the findings that matter.
+
+It has earned its keep. Two examples from the history:
+
+- On the scaffold PR it caught that the pinned Next.js and React versions carried an **unauthenticated RSC remote-code-execution vulnerability** (CVE-2025-66478).
+- On the harness PR it caught that the prompt-injection boundary this project is *built around* was **enforced by prompt only** — the root agent both received the artifact text and wrote the verdict. It is now enforced structurally: `buildInspectionRequest` takes a reference and has no content parameter, so no code path can put artifact text into the deciding context.
+
+```bash
+pnpm test        # 119 tests, on Node's built-in runner — no test dependencies
+pnpm typecheck
+pnpm lint
+pnpm build
+```
 
 ---
 

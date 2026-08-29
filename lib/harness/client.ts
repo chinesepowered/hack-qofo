@@ -159,7 +159,7 @@ export class HarnessClient {
   }
 
   async createSession(agentName: string, signal?: AbortSignal): Promise<Session> {
-    const res = await fetch(`${this.config.baseUrl}/agents/sessions`, {
+    const res = await fetch(`${this.config.baseUrl}/v1/agents/sessions`, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({ agent_name: agentName }),
@@ -185,7 +185,7 @@ export class HarnessClient {
     options: StreamOptions = {},
   ): AsyncGenerator<TurnEvent> {
     const res = await fetch(
-      `${this.config.baseUrl}/agents/sessions/${encodeURIComponent(sessionId)}/turns`,
+      `${this.config.baseUrl}/v1/agents/sessions/${encodeURIComponent(sessionId)}/turns`,
       {
         method: "POST",
         headers: this.headers({ Accept: "text/event-stream" }),
@@ -214,7 +214,7 @@ export class HarnessClient {
     const maxBytes = options.maxBytes ?? MAX_SANDBOX_FILE_BYTES;
 
     const url = new URL(
-      `${this.config.baseUrl}/agents/sessions/${encodeURIComponent(sessionId)}/sandbox/files`,
+      `${this.config.baseUrl}/v1/agents/sessions/${encodeURIComponent(sessionId)}/sandbox/files`,
     );
     url.searchParams.set("path", path);
 
