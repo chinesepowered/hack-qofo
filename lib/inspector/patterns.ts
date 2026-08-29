@@ -224,9 +224,13 @@ export function runStaticPass(source: string): StaticPassResult {
   const droppedUrls = allUrls.length - referencedUrls.length;
 
   if (allUrls.length > 0) {
+    // Informational on purpose. Nearly every legitimate skill links to its own
+    // documentation, so treating a link as a finding of badness would flag the
+    // entire ecosystem. What matters is the coverage gap: the URL goes into the
+    // unexplored list, and that is what keeps the verdict off "clean".
     add(
-      "dynamic_context_execution",
-      "medium",
+      "external_reference",
+      "info",
       `References ${allUrls.length} external location${allUrls.length === 1 ? "" : "s"}. Whatever they serve is not part of this artifact and can change after review.`,
       referencedUrls.slice(0, 3).join(", "),
     );

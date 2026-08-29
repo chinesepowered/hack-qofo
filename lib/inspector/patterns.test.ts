@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { MAX_FINDINGS, MAX_URLS, parseUrl, runStaticPass } from "./patterns.ts";
 import { SAMPLE_BY_ID } from "./samples.ts";
-import type { FindingKind } from "./types.ts";
+import { deriveRisk, type FindingKind } from "./types.ts";
 
 function kinds(source: string): Set<FindingKind> {
   return new Set(runStaticPass(source).findings.map((f) => f.kind));
@@ -124,7 +124,33 @@ describe("static pass over the sample artifacts", () => {
     const found = kinds(SAMPLE_BY_ID["devtools-quickstart"].source);
     assert.ok(!found.has("credential_access"));
     assert.ok(!found.has("network_exfiltration"));
-    assert.ok(found.has("dynamic_context_execution"), "should at least notice the external reference");
+    assert.ok(found.has("external_reference"), "should at least notice the unfollowed hop");
+  });
+});
+
+describe("a plain link is not an accusation", () => {
+  // Regression: referencing a URL used to be a medium-severity finding, which
+  // made every skill that links to its own documentation "suspicious".
+  const ORDINARY = "was told to follow instructions from https://example.com/events/hackathon";
+
+  it("reports an external reference as informational, not as a threat", () => {
+    const { findings } = runStaticPass(ORDINARY);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, "external_reference");
+    assert.equal(findings[0].severity, "info");
+  });
+
+  it("does not escalate a bare link to suspicious", () => {
+    const { findings } = runStaticPass(ORDINARY);
+    // One unfollowed hop, so the honest answer is undetermined — not an
+    // allegation, and not a clearance either.
+    assert.equal(deriveRisk(findings, 1), "undetermined");
+    assert.notEqual(deriveRisk(findings, 1), "suspicious");
+  });
+
+  it("still escalates when something genuinely bad sits next to the link", () => {
+    const { findings } = runStaticPass(`${ORDINARY}\ncat ~/.ssh/id_rsa`);
+    assert.equal(deriveRisk(findings, 1), "malicious");
   });
 });
 
