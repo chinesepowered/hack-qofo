@@ -20,3 +20,6 @@ Thumbs.db
 
 npm-debug.log*
 pnpm-debug.log*
+
+# Screenshots dropped in for debugging
+t*.png

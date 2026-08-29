@@ -82,10 +82,10 @@ export function InspectorLanes({ lanes }: { lanes: Record<InspectorRole, LaneSta
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="font-display text-sm font-bold">{ins.name}</span>
+                <span className="truncate font-display text-sm font-bold">{ins.name}</span>
                 {working && (
                   <span
-                    className="animate-soft-pulse h-1.5 w-1.5 rounded-full"
+                    className="animate-soft-pulse h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ background: ins.accent }}
                   />
                 )}
@@ -167,7 +167,9 @@ export function LiveFeed({ items }: { items: FeedItem[] }) {
               <span className="font-mono text-[11px] text-[var(--text-faint)]">{f.kind}</span>
             </div>
             <p className="text-sm leading-snug">{f.observed}</p>
-            <pre className="mt-2 overflow-x-auto rounded-lg bg-[var(--bg-sunken)] p-2 font-mono text-[11px] leading-relaxed text-[var(--text-muted)]">
+            {/* Wrap rather than scroll: evidence hidden off the right edge is
+                evidence a reviewer will not read. */}
+            <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-[var(--bg-sunken)] p-2 font-mono text-[11px] leading-relaxed text-[var(--text-muted)]">
               {f.evidence}
             </pre>
           </li>
