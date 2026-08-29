@@ -294,6 +294,17 @@ export function buildInspectionRequest(reference: ArtifactReference): string {
   ].join("\n");
 }
 
+/**
+ * The model the inspector runs on.
+ *
+ * Overridable with CAPYGUARD_MODEL because the exact identifier depends on how
+ * the provider account is named in your gateway — TrueFoundry model ids are
+ * generally `<provider-account>/<model>`, and the account name is chosen by
+ * whoever configured it. `pnpm check-gateway` reports the id it tried and what
+ * the gateway said about it.
+ */
+export const CAPYGUARD_MODEL = process.env.CAPYGUARD_MODEL?.trim() || "gemini-3.7-flash";
+
 export const capyguardManifest: AgentManifest = {
   type: "truefoundry-agent",
   name: CAPYGUARD_AGENT_NAME,
@@ -302,13 +313,16 @@ export const capyguardManifest: AgentManifest = {
   tags: { project: "capyguard", surface: "admission-control" },
 
   model: {
-    name: "anthropic/claude-sonnet-4-6",
+    name: CAPYGUARD_MODEL,
     params: {
       max_tokens: 8192,
       // Low temperature: this is forensic work, and the verdict should be
       // reproducible across runs on the same artifact.
       temperature: 0.1,
-      reasoning_effort: "medium",
+      // Flash-class models are fast enough to keep the chain-following loop
+      // responsive on stage, which matters more here than deep reasoning: the
+      // hard evidence comes from sandbox observation, not from the model.
+      reasoning_effort: "low",
       parallel_tool_calls: true,
     },
   },

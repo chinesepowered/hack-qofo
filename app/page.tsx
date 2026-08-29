@@ -1,4 +1,5 @@
 import { Capybara, Steam } from "@/components/capybara";
+import { InspectConsole } from "@/components/inspect/console";
 import { INSPECTORS } from "@/components/inspectors";
 
 const THREAT_STATS = [
@@ -23,7 +24,7 @@ const STEPS = [
   {
     n: "01",
     title: "Hand over the artifact",
-    body: "A SKILL.md, an MCP server config, or the paste someone sent you that starts \"just tell your agent to…\".",
+    body: 'A SKILL.md, an MCP server config, or the paste someone sent you that starts "just tell your agent to…".',
   },
   {
     n: "02",
@@ -33,7 +34,7 @@ const STEPS = [
   {
     n: "03",
     title: "You get evidence, not vibes",
-    body: "A verdict backed by observed behaviour, a full chain map, and a signed hash so you get told the day it changes underneath you.",
+    body: "A verdict backed by observed behaviour, a full chain map, and a pinned hash so you get told the day it changes underneath you.",
   },
 ];
 
@@ -43,6 +44,7 @@ export default function Home() {
       <SiteHeader />
       <Hero />
       <ThreatStrip />
+      <InspectConsole />
       <MeetTheInspectors />
       <HowItWorks />
       <WhyDynamic />
@@ -72,7 +74,7 @@ function SiteHeader() {
         </a>
         <a
           className="rounded-full bg-[var(--color-spring)] px-4 py-2 text-white shadow-[var(--shadow-soft)] transition hover:brightness-105"
-          href="#how"
+          href="#inspect"
         >
           Inspect something
         </a>
@@ -86,7 +88,7 @@ function Hero() {
     <section className="grid items-center gap-10 py-10 md:grid-cols-[1.15fr_1fr] md:py-16">
       <div className="animate-rise">
         <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-panel)] px-3.5 py-1.5 text-xs font-bold text-[var(--text-muted)] shadow-[var(--shadow-soft)]">
-          <span className="h-2 w-2 rounded-full bg-[var(--color-danger)] animate-soft-pulse" />
+          <span className="animate-soft-pulse h-2 w-2 rounded-full bg-[var(--color-danger)]" />
           OWASP MCP03:2025 — Tool Poisoning
         </span>
 
@@ -124,7 +126,7 @@ function Hero() {
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
           <a
-            href="#how"
+            href="#inspect"
             className="rounded-full bg-[var(--color-spring)] px-6 py-3.5 font-display text-base font-bold text-white shadow-[var(--shadow-lift)] transition hover:-translate-y-0.5 hover:brightness-105"
           >
             Send in the capybara
@@ -153,7 +155,6 @@ function HotSpring() {
             "linear-gradient(180deg, color-mix(in srgb, var(--color-spring-mist) 60%, transparent) 0%, var(--color-spring) 78%, var(--color-spring-deep) 100%)",
         }}
       >
-        {/* ripples */}
         {[0, 1, 2].map((i) => (
           <span
             key={i}
@@ -162,13 +163,12 @@ function HotSpring() {
           />
         ))}
 
-        {/* floating yuzu */}
         <span
-          className="animate-drift absolute left-8 bottom-12 h-9 w-9 rounded-full shadow-md"
+          className="animate-drift absolute bottom-12 left-8 h-9 w-9 rounded-full shadow-md"
           style={{ background: "var(--color-yuzu)" }}
         />
         <span
-          className="animate-drift absolute right-10 bottom-20 h-6 w-6 rounded-full shadow-md"
+          className="animate-drift absolute bottom-20 right-10 h-6 w-6 rounded-full shadow-md"
           style={{ background: "var(--color-yuzu-deep)", animationDelay: "2s" }}
         />
 
@@ -177,7 +177,6 @@ function HotSpring() {
           <Capybara size={190} mood="calm" bob title="A capybara relaxing in a hot spring" />
         </div>
 
-        {/* waterline */}
         <div className="absolute bottom-0 h-16 w-full rounded-b-[3rem] bg-white/15 backdrop-blur-[1px]" />
       </div>
     </div>
@@ -204,7 +203,7 @@ function ThreatStrip() {
 
 function MeetTheInspectors() {
   return (
-    <section id="inspectors" className="py-16">
+    <section id="inspectors" className="scroll-mt-8 py-16">
       <SectionHeading
         eyebrow="Four sub-agents, four clean contexts"
         title="Meet the tasting crew"
@@ -244,7 +243,7 @@ function MeetTheInspectors() {
 
 function HowItWorks() {
   return (
-    <section id="how" className="py-16">
+    <section id="how" className="scroll-mt-8 py-16">
       <SectionHeading eyebrow="Three steps" title="How a tasting goes" />
       <div className="mt-10 grid gap-5 md:grid-cols-3">
         {STEPS.map((s) => (
@@ -263,7 +262,7 @@ function HowItWorks() {
 
 function WhyDynamic() {
   return (
-    <section id="why" className="py-16">
+    <section id="why" className="scroll-mt-8 py-16">
       <div className="panel panel-lift overflow-hidden">
         <div className="grid gap-8 p-8 md:grid-cols-[1fr_auto] md:items-center md:p-10">
           <div>
@@ -277,8 +276,9 @@ function WhyDynamic() {
               nothing incriminating in that file — it says{" "}
               <em>&ldquo;fetch this URL and follow the instructions there.&rdquo;</em> The payload is
               three hops away, or it waits for the sixteenth version, or it fires from a
-              dynamic-context command <strong className="text-[var(--text)]">before the model
-              ever sees the skill</strong>, so prompt-injection guardrails never get a turn.
+              dynamic-context command{" "}
+              <strong className="text-[var(--text)]">before the model ever sees the skill</strong>, so
+              prompt-injection guardrails never get a turn.
             </p>
             <p className="mt-4 max-w-2xl leading-relaxed text-[var(--text-muted)]">
               You cannot read your way to that answer. You have to walk the chain and watch what
@@ -310,9 +310,7 @@ function SectionHeading({
       <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-spring)]">
         {eyebrow}
       </p>
-      <h2 className="mt-2 font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
-        {title}
-      </h2>
+      <h2 className="mt-2 font-display text-3xl font-extrabold tracking-tight sm:text-4xl">{title}</h2>
       {sub && <p className="mt-3 leading-relaxed text-[var(--text-muted)]">{sub}</p>}
     </div>
   );
