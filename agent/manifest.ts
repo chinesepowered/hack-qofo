@@ -1,8 +1,18 @@
 /**
- * The CapyGuard inspector agent, expressed as a TrueFoundry Agent Manifest.
+ * The CapyGuard inspector agent, expressed as a TrueForge AgentSpec.
  *
- * Field names follow the documented manifest reference:
- * https://www.truefoundry.com/docs/agent-platform/agent-harness/sdk/agent-manifest-reference
+ * TrueForge is the open-source harness (https://github.com/truefoundry/trueforge);
+ * the managed TrueFoundry Agent Harness is the hosted version of it. The spec
+ * shape is documented at https://trueforge.dev/create-agent/overview.
+ *
+ * Differences from the managed manifest, which this file used to target:
+ *   - no `type: "truefoundry-agent"` and no `collaborators`
+ *   - `name` is a sibling of the spec in the create request, not a spec field
+ *   - skills are name-only references, resolved from the local skills catalog,
+ *     and require `config.sandbox.enabled`
+ *   - MCP servers carry no `type` — they are named entries in the catalog
+ *   - compaction takes `trigger: { type, value }` rather than a flat threshold
+ * Only `model` is required; everything else has a default.
  *
  * Read `INSPECTOR_INSTRUCTIONS` before changing anything here. The separation
  * between the agents that *read* untrusted text and the agent that *decides* is
@@ -32,14 +42,12 @@ export interface ModelSpec {
   };
 }
 
+/** Name-only skill reference. Requires `config.sandbox.enabled`. */
 export interface SkillRef {
-  type: "truefoundry-skills-registry";
-  fqn: string;
-  preload?: boolean;
+  name: string;
 }
 
 export interface McpServerRef {
-  type: "truefoundry-mcp-registry";
   name: string;
   preload?: boolean;
   enable_tools?: ToolSelector[];
@@ -48,13 +56,15 @@ export interface McpServerRef {
   require_approval_for_tools?: ToolSelector[];
 }
 
-export interface AgentConfig {
+export interface RuntimeConfig {
   iteration_limit?: number;
-  timeout_seconds?: number;
   sandbox?: { enabled?: boolean; file_downloads?: boolean };
   dynamic_sub_agents?: { enabled?: boolean };
   context_management?: {
-    compaction?: { enabled?: boolean; compaction_threshold_tokens?: number };
+    compaction?: {
+      enabled?: boolean;
+      trigger?: { type: "input_tokens"; value: number };
+    };
     large_tool_response?: {
       enabled?: boolean;
       individual_tool_response_token_threshold?: number;
@@ -66,22 +76,17 @@ export interface AgentConfig {
   ask_user_questions?: { enabled?: boolean };
 }
 
-export interface AgentManifest {
-  type: "truefoundry-agent";
-  name: string;
-  description: string;
-  tags?: Record<string, string>;
+export interface AgentSpec {
   model: ModelSpec;
   instructions?: string;
-  variables?: Record<string, { default_value?: string; description?: string }>;
   skills?: SkillRef[];
   mcp_servers?: McpServerRef[];
   response_format?: {
     type: "text" | "json_object" | "json_schema";
     json_schema?: { name: string; description?: string; schema?: object; strict?: boolean };
   };
-  config?: AgentConfig;
-  collaborators: string[];
+  config?: RuntimeConfig;
+  messages?: Array<{ type: "user.message"; content: string }>;
 }
 
 /**
@@ -240,6 +245,17 @@ export const VERDICT_SCHEMA = {
 export const CAPYGUARD_AGENT_NAME = "capyguard-inspector";
 
 /**
+ * The model the inspector runs on.
+ *
+ * TrueForge references models by name from whatever providers are configured in
+ * Settings → Models, so the exact string depends on the provider entry. An
+ * OpenAI-compatible endpoint registered as a `custom` provider exposes whatever
+ * model ids you list for it. `pnpm check-harness` prints what the running
+ * instance actually offers.
+ */
+export const CAPYGUARD_MODEL = process.env.CAPYGUARD_MODEL?.trim() || "Qwen/Qwen3.8-Max";
+
+/**
  * Everything the root agent is allowed to know about an artifact.
  *
  * Note what is absent: the content. The artifact is staged into the sandbox by
@@ -294,24 +310,72 @@ export function buildInspectionRequest(reference: ArtifactReference): string {
   ].join("\n");
 }
 
+export interface ManifestAudit {
+  ok: boolean;
+  problems: string[];
+}
+
 /**
- * The model the inspector runs on.
+ * Check that an agent already stored in the harness still carries the controls
+ * this product depends on.
  *
- * Overridable with CAPYGUARD_MODEL because the exact identifier depends on how
- * the provider account is named in your gateway — TrueFoundry model ids are
- * generally `<provider-account>/<model>`, and the account name is chosen by
- * whoever configured it. `pnpm check-gateway` reports the id it tried and what
- * the gateway said about it.
+ * A matching name proves nothing: agent specs are stored under a name and can
+ * be updated separately, so an agent created by hand, or left over from an
+ * earlier version, can pass a name check while missing the containment
+ * instructions entirely. Since those instructions are the injection defence,
+ * running an inspection against a stale agent would quietly remove the
+ * security property while still reporting success.
+ *
+ * Takes `unknown` because this arrives over the network.
  */
-export const CAPYGUARD_MODEL = process.env.CAPYGUARD_MODEL?.trim() || "gemini-3.7-flash";
+export function auditStoredManifest(
+  stored: unknown,
+  expectedModel: string = CAPYGUARD_MODEL,
+): ManifestAudit {
+  const problems: string[] = [];
 
-export const capyguardManifest: AgentManifest = {
-  type: "truefoundry-agent",
-  name: CAPYGUARD_AGENT_NAME,
-  description:
-    "Detonates untrusted agent skills and MCP definitions in a sandbox, follows every instruction hop, and reports observed behaviour as an admission-control decision.",
-  tags: { project: "capyguard", surface: "admission-control" },
+  if (!stored || typeof stored !== "object") {
+    return { ok: false, problems: ["the stored agent has no readable manifest"] };
+  }
+  const spec = stored as Partial<AgentSpec>;
 
+  const instructions = typeof spec.instructions === "string" ? spec.instructions : "";
+  if (!instructions.includes("You do not read the artifact")) {
+    problems.push("instructions are missing the containment rule that keeps the verdict agent clean");
+  }
+  if (!instructions.includes("may only rest on things that were observed")) {
+    problems.push("instructions are missing the observed-behaviour rule");
+  }
+
+  if (spec.model?.name !== expectedModel) {
+    problems.push(`model is '${spec.model?.name ?? "unset"}', expected '${expectedModel}'`);
+  }
+
+  if (spec.config?.sandbox?.enabled !== true) {
+    problems.push("sandbox is not enabled, so nothing can be executed and skills will not load");
+  }
+  if (spec.config?.dynamic_sub_agents?.enabled !== true) {
+    problems.push("dynamic sub-agents are disabled, which removes the context isolation");
+  }
+
+  for (const server of spec.mcp_servers ?? []) {
+    const approvals = server.require_approval_for_tools ?? [];
+    if (server.enable_tools?.includes("@all")) {
+      problems.push(`MCP server '${server.name}' enables every tool`);
+    }
+    if (!approvals.includes("@write") || !approvals.includes("@destructive")) {
+      problems.push(`MCP server '${server.name}' does not gate writes behind approval`);
+    }
+  }
+
+  if (spec.response_format?.type !== "json_schema") {
+    problems.push("response format is not the structured verdict schema");
+  }
+
+  return { ok: problems.length === 0, problems };
+}
+
+export const capyguardManifest: AgentSpec = {
   model: {
     name: CAPYGUARD_MODEL,
     params: {
@@ -319,9 +383,9 @@ export const capyguardManifest: AgentManifest = {
       // Low temperature: this is forensic work, and the verdict should be
       // reproducible across runs on the same artifact.
       temperature: 0.1,
-      // Flash-class models are fast enough to keep the chain-following loop
-      // responsive on stage, which matters more here than deep reasoning: the
-      // hard evidence comes from sandbox observation, not from the model.
+      // The hard evidence comes from sandbox observation rather than from the
+      // model, so keeping the chain-following loop responsive matters more here
+      // than deep reasoning.
       reasoning_effort: "low",
       parallel_tool_calls: true,
     },
@@ -330,15 +394,16 @@ export const capyguardManifest: AgentManifest = {
   instructions: INSPECTOR_INSTRUCTIONS,
 
   /**
-   * Detection playbooks live in the Skills Registry rather than in this prompt,
-   * so they are versioned and can be rolled forward without redeploying the
-   * agent. `preload: false` keeps them out of context until relevant.
+   * Detection playbooks are skills rather than prompt text, so they are
+   * versioned and can be rolled forward without redefining the agent. TrueForge
+   * resolves these by name from the skills catalog and materialises them into
+   * the sandbox, which is why `config.sandbox.enabled` is required for them.
    */
   skills: [
-    { type: "truefoundry-skills-registry", fqn: "agent-skill:capyguard/skills/prompt-injection-patterns:1" },
-    { type: "truefoundry-skills-registry", fqn: "agent-skill:capyguard/skills/tool-poisoning-patterns:1" },
-    { type: "truefoundry-skills-registry", fqn: "agent-skill:capyguard/skills/dynamic-context-execution:1" },
-    { type: "truefoundry-skills-registry", fqn: "agent-skill:capyguard/skills/chain-following-policy:1", preload: true },
+    { name: "prompt-injection-patterns" },
+    { name: "tool-poisoning-patterns" },
+    { name: "dynamic-context-execution" },
+    { name: "chain-following-policy" },
   ],
 
   /**
@@ -348,7 +413,6 @@ export const capyguardManifest: AgentManifest = {
    */
   mcp_servers: [
     {
-      type: "truefoundry-mcp-registry",
       name: "github",
       enable_tools: ["@read-only", "create_issue_comment"],
       require_approval_for_tools: ["@write", "@destructive"],
@@ -361,13 +425,14 @@ export const capyguardManifest: AgentManifest = {
     // Chain-following plus per-hop analysis needs headroom, but not unbounded
     // headroom: a hostile artifact that keeps producing new hops must terminate.
     iteration_limit: 40,
-    timeout_seconds: 900,
 
+    // Off by default in TrueForge, and the single most important setting here:
+    // executing the artifact is the product, and skills will not load without it.
     sandbox: { enabled: true, file_downloads: true },
     dynamic_sub_agents: { enabled: true },
 
     context_management: {
-      compaction: { enabled: true, compaction_threshold_tokens: 60_000 },
+      compaction: { enabled: true, trigger: { type: "input_tokens", value: 60_000 } },
       // Untrusted output is truncated hard. A hostile artifact should not be
       // able to flood the context window as a way of pushing the operating
       // rules above out of scope.
@@ -382,6 +447,4 @@ export const capyguardManifest: AgentManifest = {
     generative_ui: { enabled: true },
     ask_user_questions: { enabled: true },
   },
-
-  collaborators: [],
 };

@@ -2,7 +2,7 @@
 
 **Setup:** `pnpm install && pnpm dev`, open http://localhost:3000, full screen, dark or light both fine.
 
-**No credentials needed.** Samples replay from recorded traces and the paste box runs the offline pattern pass, so nothing on this page depends on the venue wifi or a gateway being up.
+**No credentials and no harness needed.** Samples replay from recorded traces and the paste box runs the offline pattern pass, so nothing on this page depends on the venue wifi, a running TrueForge, or a sandbox provider. If you *do* have the harness up (WSL2 — it doesn't boot on Windows), `pnpm check-harness` confirms it, but the demo never depends on it.
 
 ---
 
@@ -96,11 +96,11 @@ Point at the drift finding:
 
 ## 2:50 — The close (20s)
 
-> "TrueFoundry's own docs say unvetted servers are the risk, and the answer is to allowlist the approved ones. Their governance model registers agents, enforces least privilege, and filters at runtime. Every one of those layers assumes somebody already decided the artifact was safe. Nothing in the platform produces that decision. This does."
+> "A harness gives your agent a sandbox, sub-agents, and a one-click catalog of skills and MCP servers to add. Nothing in that path scans what you're adding. TrueFoundry's own docs name the risk — unvetted servers — and answer it with an allowlist. Every layer assumes somebody already decided the artifact was safe. Nothing produces that decision. This does."
 
 If time allows, the closer:
 
-> "And the whole thing is built on their harness — the sandbox isn't a feature we added, it's the product. Also, we shipped it as a skill. Which means it can inspect itself."
+> "And it's built on TrueForge, their open-source harness — the sandbox isn't a feature we added, it's the product. Also, we shipped it as a skill. Which means it can inspect itself."
 
 ---
 
