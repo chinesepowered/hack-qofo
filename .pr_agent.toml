@@ -12,8 +12,8 @@ pr_commands = [
 [review_agent]
 # Post both a summary comment and inline comments on the diff.
 comments_location_policy = "both"
-# 1 = most noisy, 5 = only critical. 3 keeps signal high during a hackathon.
-inline_comments_severity_threshold = 3
+# Inline severity: 1 = all findings, 2 = high + medium, 3 = high only.
+inline_comments_severity_threshold = 2
 
 issues_user_guidelines = """
 This project executes untrusted, potentially malicious input (agent skills, remote
