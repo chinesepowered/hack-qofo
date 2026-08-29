@@ -1,0 +1,28 @@
+# Qodo code review configuration
+# Docs: https://docs.qodo.ai/install-and-configure/configuration-overview/configuration-file
+# NOTE: this file only takes effect for PRs opened *after* it lands on the default branch.
+
+[github_app]
+# Run automatically when a PR is opened / reopened / marked ready for review.
+pr_commands = [
+    "/agentic_describe",
+    "/agentic_review",
+]
+
+[review_agent]
+# Post both a summary comment and inline comments on the diff.
+comments_location_policy = "both"
+# Inline severity: 1 = all findings, 2 = high + medium, 3 = high only.
+inline_comments_severity_threshold = 2
+
+issues_user_guidelines = """
+This project executes untrusted, potentially malicious input (agent skills, remote
+instructions, downloaded scripts) inside a sandbox. Weight findings accordingly:
+
+- Sandbox escape or untrusted content reaching the host: highest severity.
+- Untrusted text influencing a verdict or control flow. Verdicts must derive from
+  observed sandbox behaviour, never from claims made by the analysed content.
+- Secrets, tokens, or user files reachable from sandboxed execution paths.
+- Unbounded recursion or fan-out when following instruction chains (depth/size limits).
+- Errors swallowed in analysis paths, which would silently downgrade a risk report.
+"""
